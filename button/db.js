@@ -53,7 +53,7 @@ async function initMySQL() {
     host: process.env.DB_HOST || '127.0.0.1',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASS || '',
-    database: process.env.DB_NAME || 'dash_db',
+    database: process.env.DB_NAME || 'button',
     waitForConnections: true,
     connectionLimit: 10
   });
@@ -87,18 +87,41 @@ async function initLineDB() {
 
 async function initButtonDB() {
   if (poolButton) return;
+  const host = process.env.DB_HOST || '127.0.0.1';
+  const user = process.env.DB_USER || 'root';
+  const password = process.env.DB_PASS || '';
+  const dbName = process.env.BUTTON_DB_NAME || 'button';
+  try {
+    const conn = await mysql.createConnection({ host, user, password });
+    await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+    await conn.end();
+  } catch {}
   poolButton = await mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASS || '',
-    database: process.env.BUTTON_DB_NAME || 'button',
+    host,
+    user,
+    password,
+    database: dbName,
     waitForConnections: true,
     connectionLimit: 10
   });
 }
 
+async function ensureButtonSchema() {
+  await initButtonDB();
+  await poolButton.execute(
+    'CREATE TABLE IF NOT EXISTS master_users (\n' +
+    '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
+    '  username VARCHAR(64) UNIQUE,\n' +
+    '  role VARCHAR(32),\n' +
+    '  salt VARCHAR(64),\n' +
+    '  hash VARCHAR(128),\n' +
+    '  lines TEXT\n' +
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+}
+
 async function loadFromMySQL() {
-  await initMySQL();
+  await ensurePrimarySchema();
   const [lineRows] = await pool.query('SELECT id, style, status FROM lines');
   const [machineRows] = await pool.query('SELECT id, line_id, job, status, good, reject, updated_at FROM machines');
   state.list = lineRows.map(r => r.id);
@@ -274,7 +297,7 @@ function load() {
 
 function seedInitial() {
   load();
-  if (DB_MYSQL) { initMySQL().then(loadFromMySQL).catch(() => {}); return; }
+  if (DB_MYSQL) { initMySQL().then(ensurePrimarySchema).then(loadFromMySQL).catch(() => {}); return; }
   if (!state.list || state.list.length === 0) {
     state.list = Array.from({ length: 50 }, (_, i) => `Line ${i + 1}`);
   }
@@ -349,7 +372,7 @@ function upsertMachine({ line, machine, job, good, reject, status }) {
   }
   state.lines[line] = arr;
   if (DB_MYSQL) {
-    initMySQL().then(() => {
+    initMySQL().then(() => ensurePrimarySchema()).then(() => {
       const dt = toSqlDatetime(now);
       const vals = [machine, line, job || 'Unknown', status || 'active', typeof good === 'number' ? good : 0, typeof reject === 'number' ? reject : 0, dt];
       const sql = 'INSERT INTO machines (id, line_id, job, status, good, reject, updated_at) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE job=VALUES(job), status=VALUES(status), good=VALUES(good), reject=VALUES(reject), updated_at=VALUES(updated_at)';
@@ -379,7 +402,7 @@ function incrementMachine({ line, machine, goodDelta = 0, rejectDelta = 0, statu
   }
   state.lines[line] = arr;
   if (DB_MYSQL) {
-    initMySQL().then(() => {
+    initMySQL().then(() => ensurePrimarySchema()).then(() => {
       const dt = toSqlDatetime(now);
       const sql = 'UPDATE machines SET good = good + ?, reject = reject + ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?';
       pool.execute(sql, [goodDelta || 0, rejectDelta || 0, status || null, dt, machine]).catch(() => {});
@@ -430,8 +453,31 @@ function setLineStatus(line, status) {
 
 module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLineStyle, setLineStatus, upsertMachine, incrementMachine, getStateLive, getLinesLive, getLineLive, getLineStyleLive, getLineStatusLive, 
   initMySQL, getMySQLPool,
-  initButtonDB, getButtonPool: () => poolButton,
+  initButtonDB, ensureButtonSchema, getButtonPool: () => poolButton,
+  ensurePrimarySchema,
   getKategoriMaster, createKategoriMaster, updateKategoriMaster, deleteKategoriMaster,
   getJenisMesinMaster, createJenisMesinMaster, updateJenisMesinMaster, deleteJenisMesinMaster,
   getMerkMaster, createMerkMaster, updateMerkMaster, deleteMerkMaster,
   getMasterLine, createMasterLine, updateMasterLine, deleteMasterLine };
+async function ensurePrimarySchema() {
+  await initMySQL();
+  await pool.execute(
+    'CREATE TABLE IF NOT EXISTS lines (\n' +
+    '  id VARCHAR(64) PRIMARY KEY,\n' +
+    '  style VARCHAR(64),\n' +
+    '  status VARCHAR(32)\n' +
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+  await pool.execute(
+    'CREATE TABLE IF NOT EXISTS machines (\n' +
+    '  id VARCHAR(64) PRIMARY KEY,\n' +
+    '  line_id VARCHAR(64),\n' +
+    '  job VARCHAR(64),\n' +
+    '  status VARCHAR(32),\n' +
+    '  good INT,\n' +
+    '  reject INT,\n' +
+    '  updated_at DATETIME,\n' +
+    '  CONSTRAINT fk_line FOREIGN KEY (line_id) REFERENCES lines(id)\n' +
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+}

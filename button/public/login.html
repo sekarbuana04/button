@@ -12,10 +12,11 @@
       :root{ --header-bg:#1F2A44; }
       body{ font-family:'Poppins',system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:#F4F5F7; }
       .login-card{ max-width:420px; margin:10vh auto; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,0.08); }
-      .brand{ background:var(--header-bg); color:#fff; border-radius:14px 14px 0 0; padding:18px 22px; font-weight:700; }
-      .actions{ display:flex; justify-content:space-between; align-items:center; }
+      .brand{ background:var(--header-bg); color:#fff; border-radius:14px 14px 0 0; padding:18px 22px; font-weight:700; text-align:center; }
+      .actions{ display:flex; justify-content:center; align-items:center; }
       .logo-wrap{ margin-top:8vh; }
       .logo-wrap svg{ filter: drop-shadow(0 8px 22px rgba(0,0,0,0.12)); }
+      #msg{ text-align:center; }
     </style>
   </head>
   <body>
@@ -43,7 +44,6 @@
           </div>
           <div class="actions">
             <button type="submit" class="btn btn-primary">Masuk</button>
-            <a href="/" class="btn btn-link">Kembali ke Dashboard</a>
           </div>
           <div id="msg" class="text-danger"></div>
         </form>

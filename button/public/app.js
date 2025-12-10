@@ -221,6 +221,7 @@ if (btnGrafik) btnGrafik.addEventListener('click', () => setView('grafik'));
       const tok = sessionStorage.getItem('sid');
       if (tok) headers['Authorization'] = `Bearer ${tok}`;
     } catch {}
+    if (!headers['Authorization']) { location.href = '/login'; return; }
     const res = await fetch('/api/auth/me', { headers });
     if (res.ok) {
       currentUser = await res.json();
@@ -381,6 +382,136 @@ function hideMasterLine() {
 
 function showMasterStyle() {
   showSectionOnly('masterStyleSection');
+  const msCategory = document.getElementById('msCategory');
+  const msType = document.getElementById('msType');
+  const msTypeSelected = document.getElementById('msTypeSelected');
+  const msProcessName = document.getElementById('msProcessName');
+  const msAddProcess = document.getElementById('msAddProcess');
+  const msProcessList = document.getElementById('msProcessList');
+  const msMachineSections = document.getElementById('msMachineSections');
+  const msLineSelect = document.getElementById('msLineSelect');
+  const msLineDesc = document.getElementById('msLineDesc');
+  const msReview = document.getElementById('msReview');
+  const msSubmitOrder = document.getElementById('msSubmitOrder');
+
+  const TOP_TYPES = ['Kemeja','Kaos','Sweater','Hoodie','Jaket','Blazer','Polo','Cardigan'];
+  const BOTTOM_TYPES = ['Celana Panjang','Celana Pendek','Rok Pendek','Rok Panjang','Jeans','Legging','Jogger'];
+  const msOrder = { category: '', type: '', processes: [], line: '' };
+
+  function fillTypeOptions() {
+    if (!msType) return;
+    const list = msOrder.category === 'TOP' ? TOP_TYPES : msOrder.category === 'BOTTOM' ? BOTTOM_TYPES : [];
+    msType.innerHTML = '<option value="">Pilih jenis</option>' + list.map(n => `<option value="${n}">${n}</option>`).join('');
+  }
+
+  function renderProcessList() {
+    if (!msProcessList) return;
+    msProcessList.innerHTML = msOrder.processes.map((p, idx) => {
+      return `<div class="card p-2" data-proc="${idx}"><div class="d-flex justify-content-between align-items-center"><div class="fw-semibold">${p.name}</div><div class="d-flex gap-2"><button class="btn btn-link p-0 text-warning" data-ms-act="edit"><i class="bi bi-pencil-square fs-5"></i></button><button class="btn btn-link p-0 text-danger" data-ms-act="delete"><i class="bi bi-trash fs-5"></i></button></div></div></div>`;
+    }).join('');
+    renderMachineSections();
+    renderReview();
+  }
+
+  let machineTypes = [];
+  async function loadMachineTypes() {
+    try {
+      const res = await fetch('/api/master/jenis', { headers: authHeaders() });
+      const data = await res.json();
+      machineTypes = Array.isArray(data.data) ? data.data.map(r => r.name) : [];
+    } catch { machineTypes = []; }
+  }
+
+  async function loadLines() {
+    try {
+      const res = await fetch('/api/master/line', { headers: authHeaders() });
+      const data = await res.json();
+      const rows = Array.isArray(data.data) ? data.data : [];
+      if (msLineSelect) {
+        msLineSelect.innerHTML = '<option value="">Pilih line</option>' + rows.map(r => `<option value="${r.nama_line}">${r.nama_line}</option>`).join('');
+      }
+    } catch {}
+  }
+
+  function renderMachineSections() {
+    if (!msMachineSections) return;
+    msMachineSections.innerHTML = msOrder.processes.map((p, idx) => {
+      const selectId = `msMachineSelect-${idx}`;
+      const qtyId = `msMachineQty-${idx}`;
+      const addId = `msAddMachine-${idx}`;
+      const tableId = `msMachineTable-${idx}`;
+      const opts = machineTypes.map(n => `<option value="${n}">${n}</option>`).join('');
+      const rows = (p.machines || []).map((m, j) => `<tr data-idx="${j}"><td>${m.name}</td><td>${m.qty}</td><td><button class="btn btn-link p-0 text-danger" data-msm-act="delete"><i class="bi bi-trash fs-5"></i></button></td></tr>`).join('');
+      return `<div class="border rounded p-3"><div class="d-flex justify-content-between align-items-center mb-2"><div class="fw-semibold">${p.name}</div><i class="bi bi-cpu"></i></div><div class="row g-2 align-items-end"><div class="col-md-6"><label class="form-label">Jenis Mesin</label><select id="${selectId}" class="form-select"><option value="">Pilih jenis mesin</option>${opts}</select></div><div class="col-md-3"><label class="form-label">Jumlah Mesin</label><input type="number" id="${qtyId}" class="form-control" min="1" value="1" /></div><div class="col-md-3"><button id="${addId}" class="btn btn-accent w-100">Tambah Mesin</button></div></div><div class="table-responsive mt-3"><table class="table table-sm table-striped text-center"><thead><tr><th>Mesin</th><th>Jumlah</th><th>Aksi</th></tr></thead><tbody id="${tableId}">${rows || ''}</tbody></table></div></div>`;
+    }).join('');
+  }
+
+  function renderReview() {
+    if (!msReview) return;
+    const listProc = msOrder.processes.map(p => {
+      const machines = (p.machines || []).map(m => `${m.name} × ${m.qty}`).join(', ');
+      return `<li>${p.name}${machines ? ` — ${machines}` : ''}</li>`;
+    }).join('');
+    msReview.innerHTML = `<div class="row g-3"><div class="col-md-4"><div class="border rounded p-3"><div class="text-muted">Jenis Pakaian</div><div class="fw-semibold">${msOrder.type || '—'}</div></div></div><div class="col-md-4"><div class="border rounded p-3"><div class="text-muted">Line Produksi</div><div class="fw-semibold">${msOrder.line || '—'}</div></div></div><div class="col-md-4"><div class="border rounded p-3"><div class="text-muted">Kategori</div><div class="fw-semibold">${msOrder.category || '—'}</div></div></div><div class="col-12"><div class="border rounded p-3"><div class="text-muted mb-1">Daftar Proses</div><ul class="mb-0">${listProc || '<li>—</li>'}</ul></div></div></div>`;
+  }
+
+  function bindProcessActions() {
+    document.addEventListener('click', (e) => {
+      const actBtn = e.target.closest('[data-ms-act]');
+      if (!actBtn) return;
+      const card = actBtn.closest('[data-proc]');
+      const idx = card ? parseInt(card.getAttribute('data-proc'), 10) : -1;
+      if (idx < 0) return;
+      const act = actBtn.getAttribute('data-ms-act');
+      if (act === 'delete') { msOrder.processes.splice(idx, 1); renderProcessList(); }
+      if (act === 'edit') {
+        const name = prompt('Edit nama proses', msOrder.processes[idx].name || '');
+        if (name) { msOrder.processes[idx].name = name.trim(); renderProcessList(); }
+      }
+    });
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[id^="msAddMachine-"]');
+      if (!btn) return;
+      const id = btn.id.split('-')[1];
+      const pidx = parseInt(id, 10);
+      const sel = document.getElementById(`msMachineSelect-${pidx}`);
+      const qtyEl = document.getElementById(`msMachineQty-${pidx}`);
+      const name = sel && sel.value ? sel.value : '';
+      const qty = qtyEl && qtyEl.value ? parseInt(qtyEl.value, 10) : 0;
+      if (!name || !qty || qty < 1) return;
+      const proc = msOrder.processes[pidx];
+      proc.machines = proc.machines || [];
+      proc.machines.push({ name, qty });
+      renderMachineSections();
+      renderReview();
+    });
+    document.addEventListener('click', (e) => {
+      const del = e.target.closest('[data-msm-act="delete"]');
+      if (!del) return;
+      const tr = del.closest('tr');
+      const tbody = del.closest('tbody');
+      const pId = tbody && tbody.id ? parseInt(tbody.id.split('-')[1], 10) : -1;
+      const rowIdx = tr ? parseInt(tr.getAttribute('data-idx'), 10) : -1;
+      if (pId >= 0 && rowIdx >= 0) {
+        const proc = msOrder.processes[pId];
+        proc.machines.splice(rowIdx, 1);
+        renderMachineSections();
+        renderReview();
+      }
+    });
+  }
+
+  if (msCategory) msCategory.addEventListener('change', () => { msOrder.category = msCategory.value; fillTypeOptions(); msOrder.type = ''; msTypeSelected.textContent = '—'; renderReview(); });
+  if (msType) msType.addEventListener('change', () => { msOrder.type = msType.value; msTypeSelected.textContent = msOrder.type || '—'; renderReview(); });
+  if (msAddProcess) msAddProcess.addEventListener('click', () => { const name = msProcessName && msProcessName.value ? msProcessName.value.trim() : ''; if (!name) return; msOrder.processes.push({ name, machines: [] }); msProcessName.value = ''; renderProcessList(); });
+  if (msLineSelect) msLineSelect.addEventListener('change', () => { msOrder.line = msLineSelect.value; msLineDesc.textContent = msOrder.line ? `Line terpilih: ${msOrder.line}` : '—'; renderReview(); });
+  if (msSubmitOrder) msSubmitOrder.addEventListener('click', async () => { const payload = { category: msOrder.category, type: msOrder.type, processes: msOrder.processes, line: msOrder.line }; console.log('ORDER_STYLE_SUBMIT', payload); alert('Order Style disiapkan. Integrasi simpan ke backend dapat ditambahkan.'); });
+
+  loadMachineTypes().then(() => { renderMachineSections(); });
+  loadLines();
+  fillTypeOptions();
+  renderReview();
+  bindProcessActions();
 }
 
 function hideMasterStyle() {

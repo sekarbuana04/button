@@ -10,7 +10,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 const SIMULATE = (process.env.SIMULATE || 'false').toLowerCase() === 'true';
 const SECRET = process.env.SESSION_SECRET || 'dev-secret-change';
 
@@ -115,7 +115,7 @@ app.post('/api/lines/:line/status', async (req, res) => {
 app.get('/api/mysql/export.sql', async (req, res) => {
   const live = await db.getStateLive();
   const sql = exportMySQLSQL(live, {
-    database: req.query.db || 'dash_db',
+    database: req.query.db || 'button',
     engine: 'InnoDB',
     charset: 'utf8mb4'
   });
@@ -154,10 +154,7 @@ async function getAuthUser(req, res) {
   const tok = hdr.toLowerCase().startsWith('bearer ') ? hdr.slice(7).trim() : null;
   const payload = auth.verifyToken(tok, SECRET);
   if (!payload) { res.status(401).json({ error: 'unauthorized' }); return null; }
-  let user = auth.getUserById(payload.userId);
-  if (!user) {
-    user = await auth.getUserByIdAsync(payload.userId);
-  }
+  const user = await auth.getUserByIdAsync(payload.userId);
   if (!user) { res.status(401).json({ error: 'unauthorized' }); return null; }
   return user;
 }
@@ -170,12 +167,11 @@ function canEditLine(user, line) {
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  let u = auth.getUserByUsername(username);
-  if (!u) {
-    u = await auth.getUserByUsernameAsync(username);
-  }
-  if (!u) return res.status(401).json({ error: 'invalid_credentials' });
-  if (!auth.verifyPassword(password, u.salt, u.hash)) return res.status(401).json({ error: 'invalid_credentials' });
+  const who = String(username || '').trim();
+  const u = await auth.getUserByUsernameAsync(who);
+  if (!u) { console.warn('login_fail_user_not_found', { username: who }); return res.status(401).json({ error: 'user_not_found' }); }
+  const ok = auth.verifyPassword(String(password || ''), String(u.salt || ''), String(u.hash || ''));
+  if (!ok) { console.warn('login_fail_pw_mismatch', { username: who, salt_len: String(u.salt || '').length, hash_prefix: String(u.hash || '').slice(0, 7) }); return res.status(401).json({ error: 'password_mismatch' }); }
   const token = auth.signToken({ userId: u.id, role: u.role }, SECRET);
   res.json({ ok: true, token, user: { id: u.id, username: u.username, role: u.role, lines: u.lines } });
 });
@@ -188,6 +184,94 @@ app.get('/api/auth/me', async (req, res) => {
   const user = await getAuthUser(req, res);
   if (!user) return;
   res.json({ id: user.id, username: user.username, role: user.role, lines: user.lines });
+});
+
+app.get('/api/debug/master_users', async (req, res) => {
+  try {
+    await db.ensureButtonSchema();
+    const pool = db.getButtonPool();
+    const [rows] = await pool.query('SELECT id, username, role, lines FROM master_users');
+    res.json({ data: rows });
+  } catch (e) {
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+app.post('/api/debug/hash', async (req, res) => {
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'password_wajib' });
+  const { salt, hash } = auth.hashPassword(String(password));
+  res.json({ salt, hash });
+});
+
+app.post('/api/debug/bcrypt-hash', async (req, res) => {
+  const { password, rounds } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'password_wajib' });
+  try {
+    const bc = require('bcryptjs');
+    const r = typeof rounds === 'number' && rounds > 4 && rounds < 16 ? rounds : 10;
+    const hash = bc.hashSync(String(password), r);
+    res.json({ hash });
+  } catch {
+    res.status(500).json({ error: 'bcrypt_unavailable' });
+  }
+});
+
+app.post('/api/debug/upsert-user', async (req, res) => {
+  try {
+    const { username, password, role, lines } = req.body || {};
+    if (!username || !password || !role) return res.status(400).json({ error: 'username_password_role_wajib' });
+    await db.ensureButtonSchema();
+    const pool = db.getButtonPool();
+    let salt = '';
+    let hash = '';
+    try {
+      const bc = require('bcryptjs');
+      hash = bc.hashSync(String(password), 10);
+    } catch {
+      const t = auth.hashPassword(String(password));
+      salt = t.salt; hash = t.hash;
+    }
+    const lineStr = Array.isArray(lines) ? lines.join(',') : (typeof lines === 'string' ? lines : '');
+    await pool.execute(
+      'INSERT INTO master_users (username, role, salt, hash, lines) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE role=VALUES(role), salt=VALUES(salt), hash=VALUES(hash), lines=VALUES(lines)',
+      [String(username), String(role), salt, hash, lineStr]
+    );
+    const [rows] = await pool.execute('SELECT id, username, role, lines FROM master_users WHERE username = ?', [String(username)]);
+    const u = rows && rows[0] ? rows[0] : null;
+    res.json({ ok: true, user: u });
+  } catch {
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+app.post('/api/debug/verify-user', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: 'username_password_wajib' });
+    await db.ensureButtonSchema();
+    const pool = db.getButtonPool();
+    const [rows] = await pool.execute('SELECT id, username, role, salt, hash, lines FROM master_users WHERE username = ?', [String(username)]);
+    if (!rows.length) return res.status(404).json({ error: 'user_tidak_ada' });
+    const u = rows[0];
+    const ok = auth.verifyPassword(String(password), String(u.salt || ''), String(u.hash || ''));
+    res.json({ ok, role: u.role, lines: u.lines });
+  } catch {
+    res.status(500).json({ error: 'db_error' });
+  }
+});
+
+app.get('/api/debug/user/:username', async (req, res) => {
+  try {
+    const uname = String(req.params.username || '').trim();
+    const u = await auth.getUserByUsernameAsync(uname);
+    if (!u) return res.status(404).json({ error: 'user_tidak_ada' });
+    const saltLen = String(u.salt || '').length;
+    const hashPrefix = String(u.hash || '').slice(0, 10);
+    res.json({ id: u.id, username: u.username, role: u.role, lines: u.lines, salt_len: saltLen, hash_prefix: hashPrefix });
+  } catch {
+    res.status(500).json({ error: 'db_error' });
+  }
 });
 
 app.get('/api/master/kategori', async (req, res) => {

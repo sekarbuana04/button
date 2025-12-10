@@ -1,16 +1,7 @@
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
+let bcrypt = null;
+try { bcrypt = require('bcryptjs'); } catch {}
 const db = require('./db');
-
-const dataDir = path.join(__dirname, 'data');
-fs.mkdirSync(dataDir, { recursive: true });
-const usersPath = path.join(dataDir, 'users.json');
-
-let users = [];
-
-function saveUsers() { fs.writeFileSync(usersPath, JSON.stringify(users, null, 2)); }
-function loadUsers() { if (fs.existsSync(usersPath)) { try { users = JSON.parse(fs.readFileSync(usersPath, 'utf-8')) || []; } catch {} } }
 
 function hashPassword(password, salt) {
   const s = salt || crypto.randomBytes(16).toString('hex');
@@ -19,78 +10,81 @@ function hashPassword(password, salt) {
 }
 
 function verifyPassword(password, salt, hash) {
-  const h = crypto.pbkdf2Sync(password, salt, 120000, 32, 'sha256').toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(h, 'hex'), Buffer.from(hash, 'hex'));
+  if (!hash) return false;
+  const hs = String(hash).trim();
+  const sl = String(salt || '');
+  const isHex = /^[0-9a-fA-F]+$/.test(hs);
+  const safeEqHex = (aHex, bHex) => {
+    try { return crypto.timingSafeEqual(Buffer.from(aHex, 'hex'), Buffer.from(bHex, 'hex')); } catch { return false; }
+  };
+  if (hs.startsWith('$2a$') || hs.startsWith('$2b$') || hs.startsWith('$2y$')) {
+    try { if (bcrypt && bcrypt.compareSync(password, hs)) return true; } catch {}
+    return false;
+  }
+  if (isHex) {
+    const tryPbkdf2 = (iter) => crypto.pbkdf2Sync(password, sl, iter, 32, 'sha256').toString('hex');
+    const candidates = [120000, 100000, 60000, 40000, 20000, 10000, 1000].map(i => tryPbkdf2(i));
+    for (const c of candidates) { if (safeEqHex(c, hs)) return true; }
+    const sha256Hex = crypto.createHash('sha256').update(sl ? (password + sl) : password).digest('hex');
+    if (safeEqHex(sha256Hex, hs)) return true;
+    const sha1Hex = crypto.createHash('sha1').update(sl ? (password + sl) : password).digest('hex');
+    if (safeEqHex(sha1Hex, hs)) return true;
+    const md5Hex = crypto.createHash('md5').update(sl ? (password + sl) : password).digest('hex');
+    if (safeEqHex(md5Hex, hs)) return true;
+  } else {
+    try {
+      const pb = crypto.pbkdf2Sync(password, sl, 120000, 32, 'sha256');
+      if (Buffer.compare(Buffer.from(hs, 'base64'), pb) === 0) return true;
+      const sha256B64 = crypto.createHash('sha256').update(sl ? (password + sl) : password).digest();
+      if (Buffer.compare(Buffer.from(hs, 'base64'), sha256B64) === 0) return true;
+    } catch {}
+  }
+  if (password && hs && password === hs) return true;
+  return false;
 }
 
-function getUserByUsername(username) { return users.find(u => u.username.toLowerCase() === String(username).toLowerCase()); }
-function getUserById(id) { return users.find(u => u.id === id); }
 
 async function getUserByUsernameAsync(username) {
-  // Prefer master_users in BUTTON database; fall back to dash_db; finally JSON
   try {
-    await db.initButtonDB();
+    await db.ensureButtonSchema();
     const bpool = db.getButtonPool();
-    if (bpool) {
-      const [rows] = await bpool.execute('SELECT id, username, role, salt, hash, lines FROM master_users WHERE username = ?', [String(username)]);
-      if (rows.length) {
-        const u = rows[0];
-        const lines = typeof u.lines === 'string' && u.lines ? String(u.lines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(u.lines) ? u.lines : [];
-        return { id: u.id, username: u.username, role: u.role, salt: u.salt, hash: u.hash, lines };
-      }
-    }
-  } catch {}
-  try {
-    await db.initMySQL();
-    const pool = db.getMySQLPool();
-    if (pool) {
-      const [rows] = await pool.execute('SELECT id, username, role, salt, hash FROM users WHERE username = ?', [String(username)]);
-      if (!rows.length) return null;
-      const u = rows[0];
-      const [ls] = await pool.execute('SELECT line_id FROM user_lines WHERE user_id = ?', [u.id]);
-      return { id: u.id, username: u.username, role: u.role, salt: u.salt, hash: u.hash, lines: ls.map(r => r.line_id) };
-    }
-  } catch {}
-  return getUserByUsername(username);
+    const unameQuery = String(username).trim();
+    const [rows] = await bpool.execute('SELECT * FROM master_users WHERE username = ? OR user = ? OR user_name = ? LIMIT 1', [unameQuery, unameQuery, unameQuery]);
+    if (!rows.length) return null;
+    const u = rows[0] || {};
+    const id = u.id ?? u.id_user ?? u.user_id ?? null;
+    const unameDb = u.username ?? u.user ?? u.user_name ?? String(username);
+    const role = u.role ?? u.level ?? u.user_role ?? 'tech_admin';
+    const salt = (u.salt ?? u.salt_key ?? '').trim();
+    const hash = (u.hash ?? u.password ?? u.pass ?? '').trim();
+    const rawLines = u.lines ?? u.line ?? '';
+    const lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
+    return { id, username: unameDb, role, salt, hash, lines };
+  } catch {
+    return null;
+  }
 }
 
 async function getUserByIdAsync(id) {
   try {
-    await db.initButtonDB();
+    await db.ensureButtonSchema();
     const bpool = db.getButtonPool();
-    if (bpool) {
-      const [rows] = await bpool.execute('SELECT id, username, role, salt, hash, lines FROM master_users WHERE id = ?', [id]);
-      if (rows.length) {
-        const u = rows[0];
-        const lines = typeof u.lines === 'string' && u.lines ? String(u.lines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(u.lines) ? u.lines : [];
-        return { id: u.id, username: u.username, role: u.role, salt: u.salt, hash: u.hash, lines };
-      }
-    }
-  } catch {}
-  try {
-    await db.initMySQL();
-    const pool = db.getMySQLPool();
-    if (pool) {
-      const [rows] = await pool.execute('SELECT id, username, role, salt, hash FROM users WHERE id = ?', [id]);
-      if (!rows.length) return null;
-      const u = rows[0];
-      const [ls] = await pool.execute('SELECT line_id FROM user_lines WHERE user_id = ?', [u.id]);
-      return { id: u.id, username: u.username, role: u.role, salt: u.salt, hash: u.hash, lines: ls.map(r => r.line_id) };
-    }
-  } catch {}
-  return getUserById(id);
+    const [rows] = await bpool.execute('SELECT * FROM master_users WHERE id = ?', [id]);
+    if (!rows.length) return null;
+    const u = rows[0] || {};
+    const uid = u.id ?? u.id_user ?? u.user_id ?? id;
+    const uname = u.username ?? u.user ?? u.user_name ?? null;
+    const role = u.role ?? u.level ?? u.user_role ?? 'tech_admin';
+    const salt = u.salt ?? u.salt_key ?? '';
+    const hash = u.hash ?? u.password ?? u.pass ?? '';
+    const rawLines = u.lines ?? u.line ?? '';
+    const lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
+    return { id: uid, username: uname, role, salt, hash, lines };
+  } catch {
+    return null;
+  }
 }
 
-function createUser({ username, password, role, lines = [] }) {
-  if (getUserByUsername(username)) throw new Error('username_exists');
-  const id = crypto.randomUUID();
-  const { salt, hash } = hashPassword(password);
-  const user = { id, username, salt, hash, role, lines };
-  users.push(user); saveUsers();
-  return { id, username, role, lines };
-}
-
-function listUsersPublic() { return users.map(({ id, username, role, lines }) => ({ id, username, role, lines })); }
 
 function signToken(payload, secret) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -116,28 +110,32 @@ function parseCookie(cookieHeader) {
 }
 
 function seedIfEmpty() {
-  loadUsers();
-  if (users.length === 0) {
-    const techPass = process.env.ADMIN_TECH_PASSWORD || 'admin123';
-    const linePass = process.env.ADMIN_LINE_PASSWORD || 'line123';
-    try { createUser({ username: 'techadmin', password: techPass, role: 'tech_admin', lines: [] }); } catch {}
-    for (let i = 1; i <= 50; i++) {
-      const uname = `admin_line_${i}`;
-      const lines = [`Line ${i}`];
-      try { createUser({ username: uname, password: linePass, role: 'line_admin', lines }); } catch {}
-    }
-  }
+  (async () => {
+    try {
+      await db.ensureButtonSchema();
+      const bpool = db.getButtonPool();
+      if (bpool) {
+        const [cntRows] = await bpool.query('SELECT COUNT(*) AS c FROM master_users');
+        const c = (cntRows && cntRows[0] && (cntRows[0].c || cntRows[0].C)) || 0;
+        if (c === 0) {
+          const techPass = process.env.ADMIN_TECH_PASSWORD || 'admin123';
+          const linePass = process.env.ADMIN_LINE_PASSWORD || 'line123';
+          const t = hashPassword(techPass);
+          await bpool.execute('INSERT INTO master_users (username, role, salt, hash, lines) VALUES (?,?,?,?,?)', ['techadmin', 'tech_admin', t.salt, t.hash, '']);
+          for (let i = 1; i <= 50; i++) {
+            const u = `admin_line_${i}`;
+            const l = [`Line ${i}`].join(',');
+            const h = hashPassword(linePass);
+            await bpool.execute('INSERT INTO master_users (username, role, salt, hash, lines) VALUES (?,?,?,?,?)', [u, 'line_admin', h.salt, h.hash, l]);
+          }
+        }
+      }
+    } catch {}
+  })();
 }
 
 module.exports = {
-  users,
-  loadUsers,
-  saveUsers,
   seedIfEmpty,
-  createUser,
-  listUsersPublic,
-  getUserByUsername,
-  getUserById,
   getUserByUsernameAsync,
   getUserByIdAsync,
   hashPassword,
