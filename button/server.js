@@ -115,7 +115,7 @@ app.post('/api/lines/:line/status', async (req, res) => {
 app.get('/api/mysql/export.sql', async (req, res) => {
   const live = await db.getStateLive();
   const sql = exportMySQLSQL(live, {
-    database: req.query.db || 'button',
+    database: req.query.db || 'button_db',
     engine: 'InnoDB',
     charset: 'utf8mb4'
   });

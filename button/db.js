@@ -53,7 +53,7 @@ async function initMySQL() {
     host: process.env.DB_HOST || '127.0.0.1',
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASS || '',
-    database: process.env.DB_NAME || 'button',
+    database: process.env.DB_NAME || 'button_db',
     waitForConnections: true,
     connectionLimit: 10
   });
@@ -90,7 +90,7 @@ async function initButtonDB() {
   const host = process.env.DB_HOST || '127.0.0.1';
   const user = process.env.DB_USER || 'root';
   const password = process.env.DB_PASS || '';
-  const dbName = process.env.BUTTON_DB_NAME || 'button';
+  const dbName = process.env.BUTTON_DB_NAME || 'button_db';
   try {
     const conn = await mysql.createConnection({ host, user, password });
     await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
