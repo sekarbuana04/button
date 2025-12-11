@@ -35,10 +35,8 @@ function tasksForStyle(style) {
 }
 
 let state = { lines: {}, list: [], meta: {} };
-const DB_MYSQL = (process.env.DB_MYSQL || 'false').toLowerCase() === 'true';
+const DB_MYSQL = (process.env.DB_MYSQL || 'true').toLowerCase() === 'true';
 let pool = null;
-let poolMach = null;
-let poolLine = null;
 let poolButton = null;
 
 function toSqlDatetime(iso) {
@@ -49,41 +47,13 @@ function toSqlDatetime(iso) {
 
 async function initMySQL() {
   if (pool) return;
-  pool = await mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASS || '',
-    database: process.env.DB_NAME || 'button_db',
-    waitForConnections: true,
-    connectionLimit: 10
-  });
+  await initButtonDB();
+  pool = poolButton;
 }
 
 function getMySQLPool() { return pool; }
 
-async function initMachDB() {
-  if (poolMach) return;
-  poolMach = await mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASS || '',
-    database: process.env.MACH_DB_NAME || 'mach_db',
-    waitForConnections: true,
-    connectionLimit: 10
-  });
-}
-
-async function initLineDB() {
-  if (poolLine) return;
-  poolLine = await mysql.createPool({
-    host: process.env.DB_HOST || '127.0.0.1',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASS || '',
-    database: process.env.LINE_DB_NAME || 'line_db',
-    waitForConnections: true,
-    connectionLimit: 10
-  });
-}
+ 
 
 async function initButtonDB() {
   if (poolButton) return;
@@ -113,17 +83,52 @@ async function ensureButtonSchema() {
     '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
     '  username VARCHAR(64) UNIQUE,\n' +
     '  role VARCHAR(32),\n' +
-    '  salt VARCHAR(64),\n' +
-    '  hash VARCHAR(128),\n' +
+    '  password VARCHAR(128),\n' +
     '  lines TEXT\n' +
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+  try {
+    const dbName = process.env.BUTTON_DB_NAME || 'button_db';
+    const [rows] = await poolButton.query('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = "master_users" AND COLUMN_NAME = "password"', [dbName]);
+    const c = (rows && rows[0] && (rows[0].c || rows[0].C)) || 0;
+    if (!c) { await poolButton.execute('ALTER TABLE master_users ADD COLUMN password VARCHAR(128)'); }
+  } catch {}
+}
+
+async function ensureButtonMasterSchema() {
+  await initButtonDB();
+  await poolButton.execute(
+    'CREATE TABLE IF NOT EXISTS kategori (\n' +
+    '  id_kategori INT AUTO_INCREMENT PRIMARY KEY,\n' +
+    '  name VARCHAR(128)\n' +
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+  await poolButton.execute(
+    'CREATE TABLE IF NOT EXISTS jenis_mesin (\n' +
+    '  id_jnsmesin INT AUTO_INCREMENT PRIMARY KEY,\n' +
+    '  name VARCHAR(128)\n' +
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+  await poolButton.execute(
+    'CREATE TABLE IF NOT EXISTS merk (\n' +
+    '  id_merk INT AUTO_INCREMENT PRIMARY KEY,\n' +
+    '  name VARCHAR(128),\n' +
+    '  id_jnsmesin INT NULL,\n' +
+    '  CONSTRAINT fk_jenis_mesin FOREIGN KEY (id_jnsmesin) REFERENCES jenis_mesin(id_jnsmesin)\n' +
+    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+  );
+  await poolButton.execute(
+    'CREATE TABLE IF NOT EXISTS master_line (\n' +
+    '  id_line INT AUTO_INCREMENT PRIMARY KEY,\n' +
+    '  nama_line VARCHAR(128)\n' +
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
   );
 }
 
 async function loadFromMySQL() {
   await ensurePrimarySchema();
-  const [lineRows] = await pool.query('SELECT id, style, status FROM lines');
-  const [machineRows] = await pool.query('SELECT id, line_id, job, status, good, reject, updated_at FROM machines');
+  const [lineRows] = await pool.query('SELECT id, style, status FROM `lines`');
+  const [machineRows] = await pool.query('SELECT id, line_id, job, status, good, reject, updated_at FROM `machines`');
   state.list = lineRows.map(r => r.id);
   state.meta = {};
   for (const r of lineRows) state.meta[r.id] = { style: r.style, status: r.status || 'active' };
@@ -148,7 +153,7 @@ async function getStateLive() {
 async function getLinesLive() {
   if (DB_MYSQL) {
     await initMySQL();
-    const [rows] = await pool.query('SELECT id FROM lines');
+    const [rows] = await pool.query('SELECT id FROM `lines`');
     return rows.map(r => r.id);
   }
   return state.list || [];
@@ -157,7 +162,7 @@ async function getLinesLive() {
 async function getLineLive(line) {
   if (DB_MYSQL) {
     await initMySQL();
-    const [rows] = await pool.execute('SELECT id, job, status, good, reject, updated_at FROM machines WHERE line_id = ?', [line]);
+    const [rows] = await pool.execute('SELECT id, job, status, good, reject, updated_at FROM `machines` WHERE line_id = ?', [line]);
     return rows.map(m => {
       const dt = new Date(m.updated_at);
       const iso = isNaN(dt.getTime()) ? new Date().toISOString() : dt.toISOString();
@@ -170,7 +175,7 @@ async function getLineLive(line) {
 async function getLineStyleLive(line) {
   if (DB_MYSQL) {
     await initMySQL();
-    const [rows] = await pool.execute('SELECT style FROM lines WHERE id = ?', [line]);
+    const [rows] = await pool.execute('SELECT style FROM `lines` WHERE id = ?', [line]);
     return rows.length ? rows[0].style : null;
   }
   return (state.meta && state.meta[line] && state.meta[line].style) || null;
@@ -179,105 +184,105 @@ async function getLineStyleLive(line) {
 async function getLineStatusLive(line) {
   if (DB_MYSQL) {
     await initMySQL();
-    const [rows] = await pool.execute('SELECT status FROM lines WHERE id = ?', [line]);
+    const [rows] = await pool.execute('SELECT status FROM `lines` WHERE id = ?', [line]);
     return rows.length ? (rows[0].status || 'active') : 'active';
   }
   return (state.meta && state.meta[line] && state.meta[line].status) || 'active';
 }
 
 async function getKategoriMaster() {
-  await initMachDB();
-  const [rows] = await poolMach.query('SELECT id_kategori, name FROM kategori');
+  await ensureButtonMasterSchema();
+  const [rows] = await poolButton.query('SELECT id_kategori, name FROM kategori');
   return rows.map(r => ({ id_kategori: r.id_kategori, name: r.name }));
 }
 
 async function createKategoriMaster({ name }) {
-  await initMachDB();
-  const [res] = await poolMach.execute('INSERT INTO kategori (name) VALUES (?)', [name]);
+  await ensureButtonMasterSchema();
+  const [res] = await poolButton.execute('INSERT INTO kategori (name) VALUES (?)', [name]);
   return { id_kategori: res.insertId, name };
 }
 
 async function updateKategoriMaster(id, { name }) {
-  await initMachDB();
-  await poolMach.execute('UPDATE kategori SET name = ? WHERE id_kategori = ?', [name, id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('UPDATE kategori SET name = ? WHERE id_kategori = ?', [name, id]);
   return { ok: true };
 }
 
 async function deleteKategoriMaster(id) {
-  await initMachDB();
-  await poolMach.execute('DELETE FROM kategori WHERE id_kategori = ?', [id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('DELETE FROM kategori WHERE id_kategori = ?', [id]);
   return { ok: true };
 }
 
 async function getJenisMesinMaster() {
-  await initMachDB();
-  const [rows] = await poolMach.query('SELECT id_jnsmesin, name FROM jenis_mesin');
+  await ensureButtonMasterSchema();
+  const [rows] = await poolButton.query('SELECT id_jnsmesin, name FROM jenis_mesin');
   return rows.map(r => ({ id_jnsmesin: r.id_jnsmesin, name: r.name }));
 }
 
 async function createJenisMesinMaster({ name }) {
-  await initMachDB();
-  const [res] = await poolMach.execute('INSERT INTO jenis_mesin (name) VALUES (?)', [name]);
+  await ensureButtonMasterSchema();
+  const [res] = await poolButton.execute('INSERT INTO jenis_mesin (name) VALUES (?)', [name]);
   return { id_jnsmesin: res.insertId, name };
 }
 
 async function updateJenisMesinMaster(id, { name }) {
-  await initMachDB();
-  await poolMach.execute('UPDATE jenis_mesin SET name = ? WHERE id_jnsmesin = ?', [name, id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('UPDATE jenis_mesin SET name = ? WHERE id_jnsmesin = ?', [name, id]);
   return { ok: true };
 }
 
 async function deleteJenisMesinMaster(id) {
-  await initMachDB();
-  await poolMach.execute('DELETE FROM jenis_mesin WHERE id_jnsmesin = ?', [id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('DELETE FROM jenis_mesin WHERE id_jnsmesin = ?', [id]);
   return { ok: true };
 }
 
 async function getMerkMaster() {
-  await initMachDB();
-  const [rows] = await poolMach.query('SELECT m.id_merk, m.name, m.id_jnsmesin, j.name AS jenis_mesin FROM merk m LEFT JOIN jenis_mesin j ON m.id_jnsmesin = j.id_jnsmesin');
+  await ensureButtonMasterSchema();
+  const [rows] = await poolButton.query('SELECT m.id_merk, m.name, m.id_jnsmesin, j.name AS jenis_mesin FROM merk m LEFT JOIN jenis_mesin j ON m.id_jnsmesin = j.id_jnsmesin');
   return rows.map(r => ({ id_merk: r.id_merk, name: r.name, id_jnsmesin: r.id_jnsmesin, jenis_mesin: r.jenis_mesin }));
 }
 
 async function createMerkMaster({ name, id_jnsmesin }) {
-  await initMachDB();
-  const [res] = await poolMach.execute('INSERT INTO merk (name, id_jnsmesin) VALUES (?, ?)', [name, id_jnsmesin || null]);
+  await ensureButtonMasterSchema();
+  const [res] = await poolButton.execute('INSERT INTO merk (name, id_jnsmesin) VALUES (?, ?)', [name, id_jnsmesin || null]);
   return { id_merk: res.insertId, name, id_jnsmesin: id_jnsmesin || null };
 }
 
 async function updateMerkMaster(id, { name, id_jnsmesin }) {
-  await initMachDB();
-  await poolMach.execute('UPDATE merk SET name = ?, id_jnsmesin = ? WHERE id_merk = ?', [name, id_jnsmesin || null, id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('UPDATE merk SET name = ?, id_jnsmesin = ? WHERE id_merk = ?', [name, id_jnsmesin || null, id]);
   return { ok: true };
 }
 
 async function deleteMerkMaster(id) {
-  await initMachDB();
-  await poolMach.execute('DELETE FROM merk WHERE id_merk = ?', [id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('DELETE FROM merk WHERE id_merk = ?', [id]);
   return { ok: true };
 }
 
 async function getMasterLine() {
-  await initLineDB();
-  const [rows] = await poolLine.query('SELECT id_line, nama_line FROM master_line');
+  await ensureButtonMasterSchema();
+  const [rows] = await poolButton.query('SELECT id_line, nama_line FROM master_line');
   return rows.map(r => ({ id_line: r.id_line, nama_line: r.nama_line }));
 }
 
 async function createMasterLine({ nama_line }) {
-  await initLineDB();
-  const [res] = await poolLine.execute('INSERT INTO master_line (nama_line) VALUES (?)', [nama_line]);
+  await ensureButtonMasterSchema();
+  const [res] = await poolButton.execute('INSERT INTO master_line (nama_line) VALUES (?)', [nama_line]);
   return { id_line: res.insertId, nama_line };
 }
 
 async function updateMasterLine(id, { nama_line }) {
-  await initLineDB();
-  await poolLine.execute('UPDATE master_line SET nama_line = ? WHERE id_line = ?', [nama_line, id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('UPDATE master_line SET nama_line = ? WHERE id_line = ?', [nama_line, id]);
   return { ok: true };
 }
 
 async function deleteMasterLine(id) {
-  await initLineDB();
-  await poolLine.execute('DELETE FROM master_line WHERE id_line = ?', [id]);
+  await ensureButtonMasterSchema();
+  await poolButton.execute('DELETE FROM master_line WHERE id_line = ?', [id]);
   return { ok: true };
 }
 
@@ -375,7 +380,7 @@ function upsertMachine({ line, machine, job, good, reject, status }) {
     initMySQL().then(() => ensurePrimarySchema()).then(() => {
       const dt = toSqlDatetime(now);
       const vals = [machine, line, job || 'Unknown', status || 'active', typeof good === 'number' ? good : 0, typeof reject === 'number' ? reject : 0, dt];
-      const sql = 'INSERT INTO machines (id, line_id, job, status, good, reject, updated_at) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE job=VALUES(job), status=VALUES(status), good=VALUES(good), reject=VALUES(reject), updated_at=VALUES(updated_at)';
+      const sql = 'INSERT INTO `machines` (id, line_id, job, status, good, reject, updated_at) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE job=VALUES(job), status=VALUES(status), good=VALUES(good), reject=VALUES(reject), updated_at=VALUES(updated_at)';
       pool.execute(sql, vals).catch(() => {});
     }).catch(() => {});
   }
@@ -404,7 +409,7 @@ function incrementMachine({ line, machine, goodDelta = 0, rejectDelta = 0, statu
   if (DB_MYSQL) {
     initMySQL().then(() => ensurePrimarySchema()).then(() => {
       const dt = toSqlDatetime(now);
-      const sql = 'UPDATE machines SET good = good + ?, reject = reject + ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?';
+      const sql = 'UPDATE `machines` SET good = good + ?, reject = reject + ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?';
       pool.execute(sql, [goodDelta || 0, rejectDelta || 0, status || null, dt, machine]).catch(() => {});
     }).catch(() => {});
   }
@@ -435,8 +440,8 @@ function setLineStyle(line, style) {
   state.lines[line] = arr;
   if (DB_MYSQL) {
     initMySQL().then(() => {
-      pool.execute('UPDATE lines SET style = ? WHERE id = ?', [style, line]).catch(() => {});
-      const updates = arr.map((m, idx) => pool.execute('UPDATE machines SET job = ? WHERE id = ?', [jobs[idx % jobs.length], m.machine]).catch(() => {}));
+      pool.execute('UPDATE `lines` SET style = ? WHERE id = ?', [style, line]).catch(() => {});
+      const updates = arr.map((m, idx) => pool.execute('UPDATE `machines` SET job = ? WHERE id = ?', [jobs[idx % jobs.length], m.machine]).catch(() => {}));
       Promise.all(updates).catch(() => {});
     }).catch(() => {});
   }
@@ -447,7 +452,7 @@ function setLineStatus(line, status) {
   state.meta = state.meta || {};
   const cur = state.meta[line] || {};
   state.meta[line] = { style: cur.style || null, status };
-  if (DB_MYSQL) { initMySQL().then(() => { pool.execute('UPDATE lines SET status = ? WHERE id = ?', [status, line]).catch(() => {}); }).catch(() => {}); }
+  if (DB_MYSQL) { initMySQL().then(() => { pool.execute('UPDATE `lines` SET status = ? WHERE id = ?', [status, line]).catch(() => {}); }).catch(() => {}); }
   save();
 }
 
@@ -462,14 +467,14 @@ module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLi
 async function ensurePrimarySchema() {
   await initMySQL();
   await pool.execute(
-    'CREATE TABLE IF NOT EXISTS lines (\n' +
+    'CREATE TABLE IF NOT EXISTS `lines` (\n' +
     '  id VARCHAR(64) PRIMARY KEY,\n' +
     '  style VARCHAR(64),\n' +
     '  status VARCHAR(32)\n' +
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
   );
   await pool.execute(
-    'CREATE TABLE IF NOT EXISTS machines (\n' +
+    'CREATE TABLE IF NOT EXISTS `machines` (\n' +
     '  id VARCHAR(64) PRIMARY KEY,\n' +
     '  line_id VARCHAR(64),\n' +
     '  job VARCHAR(64),\n' +
@@ -477,7 +482,7 @@ async function ensurePrimarySchema() {
     '  good INT,\n' +
     '  reject INT,\n' +
     '  updated_at DATETIME,\n' +
-    '  CONSTRAINT fk_line FOREIGN KEY (line_id) REFERENCES lines(id)\n' +
+    '  CONSTRAINT fk_line FOREIGN KEY (line_id) REFERENCES `lines`(id)\n' +
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
   );
 }

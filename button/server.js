@@ -170,7 +170,7 @@ app.post('/api/auth/login', async (req, res) => {
   const who = String(username || '').trim();
   const u = await auth.getUserByUsernameAsync(who);
   if (!u) { console.warn('login_fail_user_not_found', { username: who }); return res.status(401).json({ error: 'user_not_found' }); }
-  const ok = auth.verifyPassword(String(password || ''), String(u.salt || ''), String(u.hash || ''));
+  const ok = String(password || '') === String(u.password || '');
   if (!ok) { console.warn('login_fail_pw_mismatch', { username: who, salt_len: String(u.salt || '').length, hash_prefix: String(u.hash || '').slice(0, 7) }); return res.status(401).json({ error: 'password_mismatch' }); }
   const token = auth.signToken({ userId: u.id, role: u.role }, SECRET);
   res.json({ ok: true, token, user: { id: u.id, username: u.username, role: u.role, lines: u.lines } });
@@ -198,23 +198,11 @@ app.get('/api/debug/master_users', async (req, res) => {
 });
 
 app.post('/api/debug/hash', async (req, res) => {
-  const { password } = req.body || {};
-  if (!password) return res.status(400).json({ error: 'password_wajib' });
-  const { salt, hash } = auth.hashPassword(String(password));
-  res.json({ salt, hash });
+  res.status(410).json({ error: 'disabled' });
 });
 
 app.post('/api/debug/bcrypt-hash', async (req, res) => {
-  const { password, rounds } = req.body || {};
-  if (!password) return res.status(400).json({ error: 'password_wajib' });
-  try {
-    const bc = require('bcryptjs');
-    const r = typeof rounds === 'number' && rounds > 4 && rounds < 16 ? rounds : 10;
-    const hash = bc.hashSync(String(password), r);
-    res.json({ hash });
-  } catch {
-    res.status(500).json({ error: 'bcrypt_unavailable' });
-  }
+  res.status(410).json({ error: 'disabled' });
 });
 
 app.post('/api/debug/upsert-user', async (req, res) => {
@@ -223,19 +211,10 @@ app.post('/api/debug/upsert-user', async (req, res) => {
     if (!username || !password || !role) return res.status(400).json({ error: 'username_password_role_wajib' });
     await db.ensureButtonSchema();
     const pool = db.getButtonPool();
-    let salt = '';
-    let hash = '';
-    try {
-      const bc = require('bcryptjs');
-      hash = bc.hashSync(String(password), 10);
-    } catch {
-      const t = auth.hashPassword(String(password));
-      salt = t.salt; hash = t.hash;
-    }
     const lineStr = Array.isArray(lines) ? lines.join(',') : (typeof lines === 'string' ? lines : '');
     await pool.execute(
-      'INSERT INTO master_users (username, role, salt, hash, lines) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE role=VALUES(role), salt=VALUES(salt), hash=VALUES(hash), lines=VALUES(lines)',
-      [String(username), String(role), salt, hash, lineStr]
+      'INSERT INTO master_users (username, role, password, lines) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE role=VALUES(role), password=VALUES(password), lines=VALUES(lines)',
+      [String(username), String(role), String(password), lineStr]
     );
     const [rows] = await pool.execute('SELECT id, username, role, lines FROM master_users WHERE username = ?', [String(username)]);
     const u = rows && rows[0] ? rows[0] : null;
@@ -251,10 +230,10 @@ app.post('/api/debug/verify-user', async (req, res) => {
     if (!username || !password) return res.status(400).json({ error: 'username_password_wajib' });
     await db.ensureButtonSchema();
     const pool = db.getButtonPool();
-    const [rows] = await pool.execute('SELECT id, username, role, salt, hash, lines FROM master_users WHERE username = ?', [String(username)]);
+    const [rows] = await pool.execute('SELECT id, username, role, password, lines FROM master_users WHERE username = ?', [String(username)]);
     if (!rows.length) return res.status(404).json({ error: 'user_tidak_ada' });
     const u = rows[0];
-    const ok = auth.verifyPassword(String(password), String(u.salt || ''), String(u.hash || ''));
+    const ok = String(password) === String(u.password || '');
     res.json({ ok, role: u.role, lines: u.lines });
   } catch {
     res.status(500).json({ error: 'db_error' });
@@ -266,9 +245,7 @@ app.get('/api/debug/user/:username', async (req, res) => {
     const uname = String(req.params.username || '').trim();
     const u = await auth.getUserByUsernameAsync(uname);
     if (!u) return res.status(404).json({ error: 'user_tidak_ada' });
-    const saltLen = String(u.salt || '').length;
-    const hashPrefix = String(u.hash || '').slice(0, 10);
-    res.json({ id: u.id, username: u.username, role: u.role, lines: u.lines, salt_len: saltLen, hash_prefix: hashPrefix });
+    res.json({ id: u.id, username: u.username, role: u.role, lines: u.lines });
   } catch {
     res.status(500).json({ error: 'db_error' });
   }
