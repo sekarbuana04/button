@@ -78,6 +78,14 @@
           const data = await res.json();
           if (!res.ok) { msg.textContent = data.error || 'Login gagal'; return; }
           if (data && data.token) { try { sessionStorage.setItem('sid', data.token); } catch {} }
+          const role = data && data.user ? data.user.role : null;
+          try {
+            if (role === 'line_admin' || role === 'admline') {
+              sessionStorage.setItem('route', 'dashboard');
+            } else {
+              sessionStorage.setItem('route', 'dashboard');
+            }
+          } catch {}
           location.href = '/';
         } catch(err) {
           msg.textContent = 'Terjadi kesalahan jaringan';

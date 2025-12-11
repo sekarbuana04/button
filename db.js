@@ -39,6 +39,28 @@ const DB_MYSQL = (process.env.DB_MYSQL || 'true').toLowerCase() === 'true';
 let pool = null;
 let poolButton = null;
 
+async function discoverMasterUsersSchema({ host, user, password, port }) {
+  try {
+    const conn = await mysql.createConnection({ host, user, password, port });
+    const [rows] = await conn.query("SELECT TABLE_SCHEMA AS s FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'master_users'");
+    await conn.end();
+    const schemas = Array.isArray(rows) ? rows.map(r => r.s || r.TABLE_SCHEMA || r.table_schema).filter(Boolean) : [];
+    if (!schemas.length) return null;
+    for (const s of schemas) {
+      try {
+        const test = await mysql.createConnection({ host, user, password, port, database: s });
+        const [cnt] = await test.query('SELECT COUNT(*) AS c FROM master_users');
+        await test.end();
+        const c = (cnt && cnt[0] && (cnt[0].c || cnt[0].C)) || 0;
+        if (c > 0) return s;
+      } catch {}
+    }
+    return schemas[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 function toSqlDatetime(iso) {
   const d = iso ? new Date(iso) : new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -58,11 +80,14 @@ function getMySQLPool() { return pool; }
 async function initButtonDB() {
   if (poolButton) return;
   const host = process.env.DB_HOST || '127.0.0.1';
-  const user = process.env.DB_USER || 'root';
+  const user = process.env.DB_USER || '';
   const password = process.env.DB_PASS || '';
-  const dbName = process.env.BUTTON_DB_NAME || 'button_db';
+  const port = Number(process.env.DB_PORT || 3306);
+  let dbName = process.env.BUTTON_DB_NAME || 'button_db';
   try {
-    const conn = await mysql.createConnection({ host, user, password });
+    const conn = await mysql.createConnection({ host, user, password, port });
+    const found = await discoverMasterUsersSchema({ host, user, password, port });
+    if (found) dbName = found;
     await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
     await conn.end();
   } catch {}
@@ -70,6 +95,7 @@ async function initButtonDB() {
     host,
     user,
     password,
+    port,
     database: dbName,
     waitForConnections: true,
     connectionLimit: 10
@@ -81,10 +107,11 @@ async function ensureButtonSchema() {
   await poolButton.execute(
     'CREATE TABLE IF NOT EXISTS master_users (\n' +
     '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
-    '  username VARCHAR(64) UNIQUE,\n' +
+    '  username VARCHAR(64),\n' +
     '  role VARCHAR(32),\n' +
     '  password VARCHAR(128),\n' +
-    '  lines TEXT\n' +
+    '  `lines` TEXT,\n' +
+    '  UNIQUE KEY uniq_username (username)\n' +
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
   );
   try {

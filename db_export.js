@@ -34,8 +34,7 @@ function exportMySQLSQL(state, options = {}) {
   let sql = '';
   sql += `CREATE DATABASE IF NOT EXISTS \`${dbName}\` DEFAULT CHARACTER SET ${charset};\n`;
   sql += `USE \`${dbName}\`;\n`;
-  sql += `DROP TABLE IF EXISTS user_lines;\n`;
-  sql += `DROP TABLE IF EXISTS users;\n`;
+ 
   sql += `DROP TABLE IF EXISTS machines;\n`;
   sql += `DROP TABLE IF EXISTS lines;\n`;
   sql += `CREATE TABLE lines (\n`;
@@ -43,13 +42,7 @@ function exportMySQLSQL(state, options = {}) {
   sql += `  style VARCHAR(64),\n`;
   sql += `  status VARCHAR(16) NOT NULL DEFAULT 'active'\n`;
   sql += `) ENGINE=${engine} DEFAULT CHARSET=${charset};\n`;
-  sql += `CREATE TABLE users (\n`;
-  sql += `  id VARCHAR(64) PRIMARY KEY,\n`;
-  sql += `  username VARCHAR(64) NOT NULL UNIQUE,\n`;
-  sql += `  role VARCHAR(32) NOT NULL,\n`;
-  sql += `  salt VARCHAR(64) NOT NULL,\n`;
-  sql += `  hash VARCHAR(64) NOT NULL\n`;
-  sql += `) ENGINE=${engine} DEFAULT CHARSET=${charset};\n`;
+ 
   sql += `CREATE TABLE machines (\n`;
   sql += `  id VARCHAR(64) PRIMARY KEY,\n`;
   sql += `  line_id VARCHAR(64) NOT NULL,\n`;
@@ -61,13 +54,7 @@ function exportMySQLSQL(state, options = {}) {
   sql += `  INDEX idx_line_id (line_id),\n`;
   sql += `  CONSTRAINT fk_line FOREIGN KEY (line_id) REFERENCES lines(id) ON DELETE CASCADE ON UPDATE CASCADE\n`;
   sql += `) ENGINE=${engine} DEFAULT CHARSET=${charset};\n`;
-  sql += `CREATE TABLE user_lines (\n`;
-  sql += `  user_id VARCHAR(64) NOT NULL,\n`;
-  sql += `  line_id VARCHAR(64) NOT NULL,\n`;
-  sql += `  PRIMARY KEY (user_id, line_id),\n`;
-  sql += `  CONSTRAINT fk_ul_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE ON UPDATE CASCADE,\n`;
-  sql += `  CONSTRAINT fk_ul_line FOREIGN KEY (line_id) REFERENCES lines(id) ON DELETE CASCADE ON UPDATE CASCADE\n`;
-  sql += `) ENGINE=${engine} DEFAULT CHARSET=${charset};\n`;
+ 
 
   if (lines.length) {
     sql += `INSERT INTO lines (id, style, status) VALUES\n`;
@@ -89,30 +76,6 @@ function exportMySQLSQL(state, options = {}) {
   if (machineRows.length) {
     sql += `INSERT INTO machines (id, line_id, job, status, good, reject, updated_at) VALUES\n`;
     sql += machineRows.join(',\n');
-    sql += `;\n`;
-  }
-
-  const usersRows = [];
-  const userLineRows = [];
-  const tech = hashFor('admin123');
-  usersRows.push(`(${escapeStr('u_techadmin')}, ${escapeStr('admin_it')}, ${escapeStr('tech_admin')}, ${escapeStr(tech.salt)}, ${escapeStr(tech.hash)})`);
-  let idx = 1;
-  for (const l of lines) {
-    const uname = `admin_line_${idx}`;
-    const id = `u_line_${idx}`;
-    const h = hashFor('line123');
-    usersRows.push(`(${escapeStr(id)}, ${escapeStr(uname)}, ${escapeStr('line_admin')}, ${escapeStr(h.salt)}, ${escapeStr(h.hash)})`);
-    userLineRows.push(`(${escapeStr(id)}, ${escapeStr(l)})`);
-    idx++;
-  }
-  if (usersRows.length) {
-    sql += `INSERT INTO users (id, username, role, salt, hash) VALUES\n`;
-    sql += usersRows.join(',\n');
-    sql += `;\n`;
-  }
-  if (userLineRows.length) {
-    sql += `INSERT INTO user_lines (user_id, line_id) VALUES\n`;
-    sql += userLineRows.join(',\n');
     sql += `;\n`;
   }
 

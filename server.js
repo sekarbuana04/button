@@ -12,7 +12,7 @@ const io = new Server(server);
 
 const PORT = Number(process.env.PORT || 3000);
 const SIMULATE = (process.env.SIMULATE || 'false').toLowerCase() === 'true';
-const SECRET = process.env.SESSION_SECRET || 'dev-secret-change';
+const SECRET = process.env.SESSION_SECRET || '';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -170,6 +170,7 @@ app.post('/api/auth/login', async (req, res) => {
   const who = String(username || '').trim();
   const u = await auth.getUserByUsernameAsync(who);
   if (!u) { console.warn('login_fail_user_not_found', { username: who }); return res.status(401).json({ error: 'user_not_found' }); }
+  if (u && u.error === 'db_error') { console.error('login_db_error', { username: who, message: u.message }); return res.status(500).json({ error: 'db_error' }); }
   const ok = String(password || '') === String(u.password || '');
   if (!ok) { console.warn('login_fail_pw_mismatch', { username: who, salt_len: String(u.salt || '').length, hash_prefix: String(u.hash || '').slice(0, 7) }); return res.status(401).json({ error: 'password_mismatch' }); }
   const token = auth.signToken({ userId: u.id, role: u.role }, SECRET);
@@ -190,9 +191,42 @@ app.get('/api/debug/master_users', async (req, res) => {
   try {
     await db.ensureButtonSchema();
     const pool = db.getButtonPool();
-    const [rows] = await pool.query('SELECT id, username, role, lines FROM master_users');
+    const [rows] = await pool.query('SELECT * FROM master_users');
     res.json({ data: rows });
   } catch (e) {
+    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
+  }
+});
+
+app.get('/api/debug/pingdb', async (req, res) => {
+  try {
+    await db.ensureButtonSchema();
+    const pool = db.getButtonPool();
+    const [rows] = await pool.query('SELECT 1 AS ok');
+    res.json({ data: rows });
+  } catch (e) {
+    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
+  }
+});
+
+app.get('/api/debug/columns', async (req, res) => {
+  try {
+    await db.ensureButtonSchema();
+    const pool = db.getButtonPool();
+    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
+    const [rows] = await pool.query('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = "master_users"', [dbname]);
+    res.json({ data: rows.map(r => r.COLUMN_NAME || r.column_name) });
+  } catch (e) {
+    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
+  }
+});
+
+app.get('/api/debug/getuser/:username', async (req, res) => {
+  try {
+    const u = await auth.getUserByUsernameAsync(String(req.params.username || '').trim());
+    if (!u || u.error === 'db_error') return res.status(404).json({ error: 'user_not_found' });
+    res.json(u);
+  } catch {
     res.status(500).json({ error: 'db_error' });
   }
 });
