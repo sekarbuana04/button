@@ -314,7 +314,9 @@ async function deleteMasterLine(id) {
 }
 
 function save() {
-  fs.writeFileSync(dbPath, JSON.stringify(state, null, 2));
+  try {
+    fs.writeFileSync(dbPath, JSON.stringify(state, null, 2));
+  } catch {}
 }
 
 function load() {
