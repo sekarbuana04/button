@@ -206,28 +206,26 @@ async function ensureButtonMasterSchema() {
 }
 
 async function loadFromMySQL() {
-  await ensurePrimarySchema();
   await ensureButtonMasterSchema();
-  const [lineRows] = await pool.query('SELECT id, style, status FROM `lines`');
-  const [machineRows] = await pool.query('SELECT id, line_id, job, status, good, reject, updated_at FROM `machines`');
   const masterRows = await getMasterLine();
   const names = Array.isArray(masterRows) ? masterRows.map(r => r.nama_line).filter(Boolean) : [];
   state.list = names;
   state.meta = {};
   for (const name of names) {
-    const found = Array.isArray(lineRows) ? lineRows.find(r => r.id === name) : null;
-    const style = found ? found.style : null;
-    const status = found && found.status ? found.status : 'active';
-    state.meta[name] = { style, status };
+    let styleName = null;
+    try {
+      const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [name]);
+      const lineId = Array.isArray(r1) && r1[0] ? r1[0].id_line : null;
+      if (lineId != null) {
+        const [so] = await poolButton.query('SELECT style_nama FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+        styleName = Array.isArray(so) && so[0] ? (so[0].style_nama || null) : null;
+      }
+    } catch {}
+    const status = (state.meta && state.meta[name] && state.meta[name].status) || 'active';
+    state.meta[name] = { style: styleName, status };
   }
   const map = {};
   for (const name of names) map[name] = [];
-  for (const m of machineRows) {
-    const dt = new Date(m.updated_at);
-    const iso = isNaN(dt.getTime()) ? new Date().toISOString() : dt.toISOString();
-    if (!map[m.line_id]) map[m.line_id] = [];
-    map[m.line_id].push({ line: m.line_id, machine: m.id, job: m.job, status: m.status, good: Number(m.good) || 0, reject: Number(m.reject) || 0, updatedAt: iso });
-  }
   state.lines = map;
   save();
 }
@@ -256,33 +254,45 @@ async function getLinesLive() {
 }
 
 async function getLineLive(line) {
-  if (DB_MYSQL) {
-    await initMySQL();
-    const [rows] = await pool.execute('SELECT id, job, status, good, reject, updated_at FROM `machines` WHERE line_id = ?', [line]);
-    return rows.map(m => {
-      const dt = new Date(m.updated_at);
-      const iso = isNaN(dt.getTime()) ? new Date().toISOString() : dt.toISOString();
-      return { line, machine: m.id, job: m.job, status: m.status, good: Number(m.good) || 0, reject: Number(m.reject) || 0, updatedAt: iso };
-    });
-  }
+  try {
+    await ensureButtonMasterSchema();
+    const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
+    const lineId = Array.isArray(r1) && r1[0] ? r1[0].id_line : null;
+    let styleId = null;
+    if (lineId != null) {
+      const [so] = await poolButton.query('SELECT id_style FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+      styleId = Array.isArray(so) && so[0] ? so[0].id_style : null;
+    }
+    const out = [];
+    if (styleId != null) {
+      const [sp] = await poolButton.query('SELECT id_proses, nama_proses FROM style_proses WHERE id_style = ? ORDER BY id_proses ASC', [styleId]);
+      for (const p of (Array.isArray(sp) ? sp : [])) {
+        const [cnt] = await poolButton.query('SELECT qty FROM style_proses_mesin WHERE id_proses = ?', [p.id_proses]);
+        const qty = Array.isArray(cnt) && cnt[0] && (cnt[0].qty != null) ? Number(cnt[0].qty) : 0;
+        for (let i = 1; i <= qty; i++) {
+          out.push({ line, machine: `${line}-${p.nama_proses}-${i}`, job: p.nama_proses || 'Unknown', status: 'active', good: 0, reject: 0, updatedAt: new Date().toISOString() });
+        }
+      }
+    }
+    return out;
+  } catch {}
   return state.lines[line] || [];
 }
 
 async function getLineStyleLive(line) {
-  if (DB_MYSQL) {
-    await initMySQL();
-    const [rows] = await pool.execute('SELECT style FROM `lines` WHERE id = ?', [line]);
-    return rows.length ? rows[0].style : null;
-  }
+  try {
+    await ensureButtonMasterSchema();
+    const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
+    const lineId = Array.isArray(r1) && r1[0] ? r1[0].id_line : null;
+    if (lineId != null) {
+      const [so] = await poolButton.query('SELECT style_nama FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+      return (Array.isArray(so) && so[0]) ? (so[0].style_nama || null) : null;
+    }
+  } catch {}
   return (state.meta && state.meta[line] && state.meta[line].style) || null;
 }
 
 async function getLineStatusLive(line) {
-  if (DB_MYSQL) {
-    await initMySQL();
-    const [rows] = await pool.execute('SELECT status FROM `lines` WHERE id = ?', [line]);
-    return rows.length ? (rows[0].status || 'active') : 'active';
-  }
   return (state.meta && state.meta[line] && state.meta[line].status) || 'active';
 }
 
@@ -522,14 +532,6 @@ function upsertMachine({ line, machine, job, good, reject, status }) {
     arr.push({ line, machine, job: job || 'Unknown', good: good || 0, reject: reject || 0, status: status || 'active', updatedAt: now });
   }
   state.lines[line] = arr;
-  if (DB_MYSQL) {
-    initMySQL().then(() => ensurePrimarySchema()).then(() => {
-      const dt = toSqlDatetime(now);
-      const vals = [machine, line, job || 'Unknown', status || 'active', typeof good === 'number' ? good : 0, typeof reject === 'number' ? reject : 0, dt];
-      const sql = 'INSERT INTO `machines` (id, line_id, job, status, good, reject, updated_at) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE job=VALUES(job), status=VALUES(status), good=VALUES(good), reject=VALUES(reject), updated_at=VALUES(updated_at)';
-      pool.execute(sql, vals).catch(() => {});
-    }).catch(() => {});
-  }
   save();
 }
 
@@ -552,13 +554,6 @@ function incrementMachine({ line, machine, goodDelta = 0, rejectDelta = 0, statu
     }
   }
   state.lines[line] = arr;
-  if (DB_MYSQL) {
-    initMySQL().then(() => ensurePrimarySchema()).then(() => {
-      const dt = toSqlDatetime(now);
-      const sql = 'UPDATE `machines` SET good = good + ?, reject = reject + ?, status = COALESCE(?, status), updated_at = ? WHERE id = ?';
-      pool.execute(sql, [goodDelta || 0, rejectDelta || 0, status || null, dt, machine]).catch(() => {});
-    }).catch(() => {});
-  }
   save();
 }
 
@@ -584,13 +579,10 @@ function setLineStyle(line, style) {
     arr[i] = { ...m, job: jobs[i % jobs.length], updatedAt: new Date().toISOString() };
   }
   state.lines[line] = arr;
-  if (DB_MYSQL) {
-    initMySQL().then(() => {
-      pool.execute('UPDATE `lines` SET style = ? WHERE id = ?', [style, line]).catch(() => {});
-      const updates = arr.map((m, idx) => pool.execute('UPDATE `machines` SET job = ? WHERE id = ?', [jobs[idx % jobs.length], m.machine]).catch(() => {}));
-      Promise.all(updates).catch(() => {});
-    }).catch(() => {});
-  }
+  try {
+    const processes = jobs.map(n => ({ name: n }));
+    saveStyleOrder({ line, category: '', type: style, processes }).catch(() => {});
+  } catch {}
   save();
 }
 
@@ -598,8 +590,71 @@ function setLineStatus(line, status) {
   state.meta = state.meta || {};
   const cur = state.meta[line] || {};
   state.meta[line] = { style: cur.style || null, status };
-  if (DB_MYSQL) { initMySQL().then(() => { pool.execute('UPDATE `lines` SET status = ? WHERE id = ?', [status, line]).catch(() => {}); }).catch(() => {}); }
   save();
+}
+
+async function tableExists(poolConn, tableName) {
+  try {
+    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
+    const [rows] = await poolConn.query('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [dbname, tableName]);
+    const c = (rows && rows[0] && (rows[0].c || rows[0].C)) || 0;
+    return c > 0;
+  } catch { return false; }
+}
+
+async function migrateLegacyTables() {
+  await ensureButtonMasterSchema();
+  const poolConn = poolButton;
+  try {
+    if (await tableExists(poolConn, 'lines')) {
+      const [rows] = await poolConn.query('SELECT DISTINCT id FROM `lines`');
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        const name = r.id;
+        if (!name) continue;
+        try {
+          const [ex] = await poolConn.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [name]);
+          if (!(Array.isArray(ex) && ex.length)) {
+            await poolConn.execute('INSERT INTO master_lines (nama_line) VALUES (?)', [name]);
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  try {
+    if (await tableExists(poolConn, 'merk')) {
+      const [rows] = await poolConn.query('SELECT id_merk, name, id_jnsmesin FROM merk');
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        try {
+          const [ex] = await poolConn.query('SELECT id_merk FROM merk_mesin WHERE id_merk = ? LIMIT 1', [r.id_merk]);
+          if (!(Array.isArray(ex) && ex.length)) {
+            await poolConn.execute('INSERT INTO merk_mesin (id_merk, name, id_jnsmesin) VALUES (?,?,?)', [r.id_merk, r.name || null, r.id_jnsmesin || null]);
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+  try {
+    if (await tableExists(poolConn, 'machines')) {
+      const [rows] = await poolConn.query('SELECT DISTINCT job FROM machines');
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        const jenisName = r.job ? String(r.job) : null;
+        let idJns = null;
+        if (jenisName) {
+          try {
+            const [j] = await poolConn.query('SELECT id_jnsmesin FROM jenis_mesin WHERE name = ? LIMIT 1', [jenisName]);
+            if (Array.isArray(j) && j.length) idJns = j[0].id_jnsmesin;
+          } catch {}
+        }
+        try {
+          await poolConn.execute('INSERT INTO master_mesin (id_merk, id_jnsmesin, id_kategori) VALUES (?, ?, ?)', [null, idJns || null, null]);
+        } catch {}
+      }
+    }
+  } catch {}
+  try { await poolConn.execute('DROP TABLE IF EXISTS machines'); } catch {}
+  try { await poolConn.execute('DROP TABLE IF EXISTS lines'); } catch {}
+  try { await poolConn.execute('DROP TABLE IF EXISTS merk'); } catch {}
+  return { ok: true };
 }
 
 module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLineStyle, setLineStatus, upsertMachine, incrementMachine, getStateLive, getLinesLive, getLineLive, getLineStyleLive, getLineStatusLive, 
@@ -612,46 +667,10 @@ module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLi
   getMerkMaster, createMerkMaster, updateMerkMaster, deleteMerkMaster,
   getMasterLine, createMasterLine, updateMasterLine, deleteMasterLine,
   saveStyleOrder, getStyleOrderByLine, addProcessMachines, getMasterOrderSummary,
+  migrateLegacyTables,
   isButtonDbReady };
 async function ensurePrimarySchema() {
   await initMySQL();
-  await pool.execute(
-    'CREATE TABLE IF NOT EXISTS `lines` (\n' +
-    '  id VARCHAR(64) PRIMARY KEY,\n' +
-    '  style VARCHAR(64),\n' +
-    '  status VARCHAR(32)\n' +
-    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-  );
-  await pool.execute(
-    'CREATE TABLE IF NOT EXISTS `machines` (\n' +
-    '  id VARCHAR(64) PRIMARY KEY,\n' +
-    '  line_id VARCHAR(64),\n' +
-    '  job VARCHAR(64),\n' +
-    '  status VARCHAR(32),\n' +
-    '  good INT,\n' +
-    '  reject INT,\n' +
-    '  updated_at DATETIME,\n' +
-    '  CONSTRAINT fk_line FOREIGN KEY (line_id) REFERENCES `lines`(id)\n' +
-    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-  );
-  await pool.execute(
-    'CREATE TABLE IF NOT EXISTS `style_orders` (\n' +
-    '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
-    '  line_id VARCHAR(64),\n' +
-    '  category VARCHAR(32),\n' +
-    '  type VARCHAR(128),\n' +
-    '  created_at DATETIME\n' +
-    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-  );
-  await pool.execute(
-    'CREATE TABLE IF NOT EXISTS `style_processes` (\n' +
-    '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
-    '  order_id INT,\n' +
-    '  name VARCHAR(128),\n' +
-    '  position INT,\n' +
-    '  CONSTRAINT fk_order FOREIGN KEY (order_id) REFERENCES `style_orders`(id) ON DELETE CASCADE\n' +
-    ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-  );
 }
 
 async function refreshLinesFromMaster() {
@@ -745,36 +764,27 @@ async function saveStyleOrder({ line, category, type, processes }) {
 }
 
 async function getStyleOrderByLine(line) {
-  if (DB_MYSQL) {
-    await ensurePrimarySchema();
-    const [rows] = await pool.execute('SELECT id, category, type FROM `style_orders` WHERE line_id = ? ORDER BY id DESC LIMIT 1', [line]);
-    const order = rows && rows[0] ? rows[0] : null;
-    if (!order) {
+  try {
+    await ensureButtonMasterSchema();
+    let lineId = null;
+    try {
+      const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
+      if (Array.isArray(r1) && r1.length) lineId = r1[0].id_line;
+    } catch {}
+    if (lineId == null) {
       try {
-        await ensureButtonMasterSchema();
-        let lineId = null;
-        try {
-          const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
-          if (Array.isArray(r1) && r1.length) lineId = r1[0].id_line;
-        } catch {}
-        if (lineId == null) {
-          try {
-            const [r2] = await poolButton.query('SELECT id_line FROM master_line WHERE nama_line = ? LIMIT 1', [line]);
-            if (Array.isArray(r2) && r2.length) lineId = r2[0].id_line;
-          } catch {}
-        }
-        if (lineId != null) {
-          const [so] = await poolButton.query('SELECT style_nama FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
-          if (Array.isArray(so) && so.length) {
-            return { order: { category: '', type: so[0].style_nama }, processes: [] };
-          }
-        }
+        const [r2] = await poolButton.query('SELECT id_line FROM master_line WHERE nama_line = ? LIMIT 1', [line]);
+        if (Array.isArray(r2) && r2.length) lineId = r2[0].id_line;
       } catch {}
-      return { order: null, processes: [] };
     }
-    const [procs] = await pool.execute('SELECT name, position FROM `style_processes` WHERE order_id = ? ORDER BY position ASC, id ASC', [order.id]);
-    return { order: { category: order.category, type: order.type }, processes: procs.map(r => ({ name: r.name })) };
-  }
+    if (lineId != null) {
+      const [so] = await poolButton.query('SELECT id_style, style_nama FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+      const styleRow = Array.isArray(so) && so[0] ? so[0] : null;
+      if (!styleRow) return { order: null, processes: [] };
+      const [sp] = await poolButton.query('SELECT nama_proses FROM style_proses WHERE id_style = ? ORDER BY id_proses ASC', [styleRow.id_style]);
+      return { order: { category: '', type: styleRow.style_nama }, processes: (Array.isArray(sp) ? sp : []).map(r => ({ name: r.nama_proses })) };
+    }
+  } catch {}
   const curStyle = getLineStyle(line);
   return { order: curStyle ? { category: '', type: curStyle } : null, processes: [] };
 }
@@ -846,9 +856,6 @@ async function getMasterOrderSummary() {
       for (const p of procs) {
         let qty = 0;
         try { const [cnt] = await poolButton.query('SELECT SUM(qty) AS c FROM style_proses_mesin WHERE id_proses = ?', [p.id_proses]); qty = (Array.isArray(cnt) && cnt[0] && (cnt[0].c || cnt[0].C)) ? Number(cnt[0].c || cnt[0].C) : 0; } catch {}
-        if (!qty && DB_MYSQL) {
-          try { await ensurePrimarySchema(); const [m2] = await pool.query('SELECT COUNT(*) AS c FROM `machines` WHERE line_id = ? AND job = ?', [L.nama_line, p.nama_proses || '']); qty = (Array.isArray(m2) && m2[0] && (m2[0].c || m2[0].C)) ? Number(m2[0].c || m2[0].C) : 0; } catch {}
-        }
         procDetails.push({ name: p.nama_proses || '', machines: qty });
       }
       const totalMachines = procDetails.reduce((s, x) => s + (x.machines || 0), 0);

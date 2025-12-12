@@ -470,6 +470,21 @@ app.get('/api/master/order', async (req, res) => {
   res.json({ data });
 });
 
+// Admin: migrasi legacy tables ke master dan drop
+app.post('/api/admin/migrate-legacy', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const result = await db.migrateLegacyTables();
+    await db.refreshLinesFromMaster();
+    await emitState();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
+  }
+});
+
 app.put('/api/master/line/:id', async (req, res) => {
   const user = await getAuthUser(req, res);
   if (!user) return;
