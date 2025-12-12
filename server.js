@@ -405,7 +405,61 @@ app.post('/api/master/line', async (req, res) => {
   const { nama_line } = req.body || {};
   if (!nama_line) return res.status(400).json({ error: 'nama_line wajib' });
   const row = await db.createMasterLine({ nama_line });
+  await db.refreshLinesFromMaster();
+  await emitState();
   res.json({ ok: true, data: row });
+});
+
+// Style Order endpoints
+app.post('/api/style/order', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const { category, type, processes, line } = req.body || {};
+  if (!line) return res.status(400).json({ error: 'line wajib' });
+  if (!canEditLine(user, line)) return res.status(403).json({ error: 'forbidden' });
+  await db.saveStyleOrder({ line, category, type, processes });
+  await emitState();
+  res.json({ ok: true });
+});
+
+app.get('/api/style/order/:line', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const line = req.params.line;
+  if (!canEditLine(user, line) && user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const data = await db.getStyleOrderByLine(line);
+  res.json(data);
+});
+
+// Debug endpoint untuk memeriksa style_order di button_db
+app.get('/api/debug/style-order/:line', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const line = req.params.line;
+  try {
+    const rows = await db.getMasterLine();
+    const found = (rows || []).find(r => String(r.nama_line) === String(line));
+    const idLine = found ? found.id_line : null;
+    let styleRow = null;
+    if (idLine != null) {
+      const pool = db.getButtonPool();
+      const [so] = await pool.query('SELECT id_style, style_nama, id_line FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [idLine]);
+      styleRow = Array.isArray(so) && so[0] ? so[0] : null;
+    }
+    res.json({ id_line: idLine, style_row: styleRow });
+  } catch (e) { res.status(500).json({ error: 'debug_error', message: String(e && e.message || e) }); }
+});
+
+// Master Proses: add machines per process
+app.post('/api/process/machines', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const { line, processName, machineType, qty } = req.body || {};
+  if (!line || !processName || !machineType) return res.status(400).json({ error: 'line_process_machine_wajib' });
+  if (!canEditLine(user, line)) return res.status(403).json({ error: 'forbidden' });
+  await db.addProcessMachines({ line, processName, machineType, qty });
+  await emitState();
+  res.json({ ok: true });
 });
 
 app.put('/api/master/line/:id', async (req, res) => {
@@ -415,6 +469,8 @@ app.put('/api/master/line/:id', async (req, res) => {
   const { nama_line } = req.body || {};
   if (!nama_line) return res.status(400).json({ error: 'nama_line wajib' });
   await db.updateMasterLine(req.params.id, { nama_line });
+  await db.refreshLinesFromMaster();
+  await emitState();
   res.json({ ok: true });
 });
 
@@ -423,5 +479,7 @@ app.delete('/api/master/line/:id', async (req, res) => {
   if (!user) return;
   if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
   await db.deleteMasterLine(req.params.id);
+  await db.refreshLinesFromMaster();
+  await emitState();
   res.json({ ok: true });
 });

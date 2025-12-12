@@ -1,7 +1,18 @@
 const crypto = require('crypto');
 const db = require('./db');
+const FAKE = (process.env.AUTH_FAKE || 'false').toLowerCase() === 'true';
+const fakeUsers = [
+  { id: 1, username: 'adminit', role: 'tech_admin', password: 'admin123', lines: [] },
+  { id: 2, username: 'admline', role: 'line_admin', password: 'line123', lines: ['Line 1','Line 2'] }
+];
 
 async function getUserByUsernameAsync(username) {
+  if (FAKE || !db.isButtonDbReady()) {
+    const unameQuery = String(username || '').trim().toLowerCase();
+    const u = fakeUsers.find(x => x.username.toLowerCase() === unameQuery) || null;
+    if (u) return { id: u.id, username: u.username, role: u.role, password: u.password, lines: u.lines };
+    // fallback ke DB jika user tidak ada di fake
+  }
   try {
     await db.ensureButtonSchema();
     const bpool = db.getButtonPool();
@@ -27,14 +38,42 @@ async function getUserByUsernameAsync(username) {
     const role = roleRaw === 'admit' ? 'tech_admin' : roleRaw === 'admline' ? 'line_admin' : roleRaw;
     const password = (u.password ?? u.pass ?? '').trim();
     const rawLines = u.lines ?? u.line ?? '';
-    const lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
+    let lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
+    if (role === 'line_admin' && (!lines || lines.length === 0)) {
+      try {
+        const all = await db.getMasterLine();
+        const names = Array.isArray(all) ? all.map(r => r.nama_line).filter(Boolean) : [];
+        const nm = String(nama || '').toUpperCase();
+        let guess = null;
+        const m = nm.match(/LINE\s*([A-Z0-9\- ]+)/);
+        if (m && m[0]) {
+          const target = m[0].trim();
+          guess = names.find(n => String(n).toUpperCase() === target) || names.find(n => String(n).toUpperCase().includes(target));
+        }
+        if (!guess) {
+          const un = String(unameDb || '').toUpperCase();
+          const tok = un.replace(/^ADM[_\-]?/,'').replace(/^ADMLINE[_\-]?/,'');
+          if (tok) {
+            const candidate = `LINE ${tok}`.replace(/\s+/g,' ').trim();
+            guess = names.find(n => String(n).toUpperCase() === candidate);
+          }
+        }
+        if (!guess && names.length) guess = names[0];
+        lines = guess ? [guess] : [];
+      } catch {}
+    }
     return { id, username: unameDb, role, password, lines };
   } catch (e) {
-    return { error: 'db_error', message: String(e && e.message || '') };
+    return null;
   }
 }
 
 async function getUserByIdAsync(id) {
+  if (FAKE || !db.isButtonDbReady()) {
+    const u = fakeUsers.find(x => String(x.id) === String(id)) || null;
+    if (u) return { id: u.id, username: u.username, role: u.role, password: u.password, lines: u.lines };
+    // fallback ke DB jika tidak ada di fake
+  }
   try {
     await db.ensureButtonSchema();
     const bpool = db.getButtonPool();
@@ -52,10 +91,33 @@ async function getUserByIdAsync(id) {
     const role = roleRaw === 'admit' ? 'tech_admin' : roleRaw === 'admline' ? 'line_admin' : roleRaw;
     const password = u.password ?? u.pass ?? '';
     const rawLines = u.lines ?? u.line ?? '';
-    const lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
+    let lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
+    if (role === 'line_admin' && (!lines || lines.length === 0)) {
+      try {
+        const all = await db.getMasterLine();
+        const names = Array.isArray(all) ? all.map(r => r.nama_line).filter(Boolean) : [];
+        const nm = String(nama || '').toUpperCase();
+        let guess = null;
+        const m = nm.match(/LINE\s*([A-Z0-9\- ]+)/);
+        if (m && m[0]) {
+          const target = m[0].trim();
+          guess = names.find(n => String(n).toUpperCase() === target) || names.find(n => String(n).toUpperCase().includes(target));
+        }
+        if (!guess) {
+          const un = String(uname || '').toUpperCase();
+          const tok = un.replace(/^ADM[_\-]?/,'').replace(/^ADMLINE[_\-]?/,'');
+          if (tok) {
+            const candidate = `LINE ${tok}`.replace(/\s+/g,' ').trim();
+            guess = names.find(n => String(n).toUpperCase() === candidate);
+          }
+        }
+        if (!guess && names.length) guess = names[0];
+        lines = guess ? [guess] : [];
+      } catch {}
+    }
     return { id: uid, username: uname, role, password, lines };
   } catch (e) {
-    return { error: 'db_error', message: String(e && e.message || '') };
+    return null;
   }
 }
 
