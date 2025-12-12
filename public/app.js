@@ -262,6 +262,8 @@ document.addEventListener('click', (e) => {
   if (v === 'task' || v === 'grafik') setView(v);
   if (v === 'dashboard') { setView('task'); restoreDashboard(); setRouteIndicator('dashboard'); try { sessionStorage.setItem('route', 'dashboard'); } catch {} }
   if (v === 'master-mesin') { showMasterMesin(); setRouteIndicator('master-mesin'); try { sessionStorage.setItem('route', 'master-mesin'); } catch {} }
+  if (v === 'master-order') { showMasterOrder(); setRouteIndicator('master-order'); try { sessionStorage.setItem('route', 'master-order'); } catch {} }
+  if (v === 'master-button') { showMasterMesin(); setRouteIndicator('master-button'); try { sessionStorage.setItem('route', 'master-button'); } catch {} }
   if (v === 'master-line') { showMasterLine(); setRouteIndicator('master-line'); try { sessionStorage.setItem('route', 'master-line'); } catch {} }
   if (v === 'master-style') { showMasterStyle(); setRouteIndicator('master-style'); try { sessionStorage.setItem('route', 'master-style'); } catch {} }
   if (v === 'master-proses') { showMasterProses(); setRouteIndicator('master-proses'); try { sessionStorage.setItem('route', 'master-proses'); } catch {} }
@@ -313,6 +315,13 @@ function enforceRoleUI() {
         showMasterMesin();
         setMmTab(tab || 'kategori');
         setRouteIndicator('master-mesin');
+      } else if (route === 'master-button') {
+        showMasterMesin();
+        setMmTab(tab || 'kategori');
+        setRouteIndicator('master-button');
+      } else if (route === 'master-order') {
+        showMasterOrder();
+        setRouteIndicator('master-order');
       } else if (route === 'master-line') {
         showMasterLine();
         setRouteIndicator('master-line');
@@ -575,7 +584,7 @@ function showSectionOnly(id) {
   const controlsBar = document.querySelector('.controls-bar');
   if (linePanel) linePanel.classList.add('d-none');
   if (controlsBar) controlsBar.classList.add('d-none');
-  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection'].forEach(s => {
+  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.add('d-none');
   });
@@ -588,7 +597,7 @@ function restoreDashboard() {
   const controlsBar = document.querySelector('.controls-bar');
   if (linePanel) linePanel.classList.remove('d-none');
   if (controlsBar) controlsBar.classList.remove('d-none');
-  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection'].forEach(s => {
+  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.add('d-none');
   });
@@ -599,6 +608,24 @@ function restoreDashboard() {
     gridSection.classList.toggle('d-none', !gridOn);
     chartSection.classList.toggle('d-none', gridOn);
   }
+}
+
+function showMasterOrder() {
+  showSectionOnly('masterOrderSection');
+  const tbody = document.getElementById('moTbody');
+  (async () => {
+    try {
+      const res = await fetch('/api/master/order', { headers: authHeaders() });
+      const data = await res.json();
+      const rows = Array.isArray(data && data.data) ? data.data : [];
+      if (tbody) {
+        tbody.innerHTML = rows.map(r => {
+          const det = Array.isArray(r.processes) ? r.processes.map(p => `${p.name} (${p.machines})`).join(', ') : '';
+          return `<tr><td>${r.line}</td><td>${r.category || ''}</td><td>${r.type || ''}</td><td>${r.totalProcesses || 0}</td><td>${r.totalMachines || 0}</td><td>${det || '—'}</td></tr>`;
+        }).join('');
+      }
+    } catch {}
+  })();
 }
 
 function setMmTab(tab) {

@@ -462,6 +462,14 @@ app.post('/api/process/machines', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Master Order summary
+app.get('/api/master/order', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const data = await db.getMasterOrderSummary();
+  res.json({ data });
+});
+
 app.put('/api/master/line/:id', async (req, res) => {
   const user = await getAuthUser(req, res);
   if (!user) return;
