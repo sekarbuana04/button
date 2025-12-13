@@ -344,7 +344,7 @@ function enforceRoleUI() {
       const mcStored = sessionStorage.getItem('mcTab');
       if (route === 'master-mesin') {
         showMasterMesin();
-        setMmTab(mmStored || 'kategori');
+        setMmTab(mmStored === 'merk' ? 'merk' : 'jenis');
         setRouteIndicator('master-mesin');
       } else if (route === 'master-button') {
         showMasterCounter();
@@ -385,7 +385,7 @@ function applyTheme(name) {
   if (name === 'midnight') document.body.classList.add('theme-midnight');
 }
 
-let mmTab = 'kategori';
+let mmTab = 'jenis';
 let mmRows = [];
 let mmJenisIndex = [];
 let mmModalAction = null;
@@ -409,7 +409,7 @@ function authHeaders() {
 
 function showMasterMesin() {
   showSectionOnly('masterMesinSection');
-  setMmTab('kategori');
+  setMmTab('jenis');
 }
 
 function hideMasterMesin() {
@@ -503,9 +503,13 @@ function showMasterProses() {
   const mpAddProcess = document.getElementById('mpAddProcess');
   const mpProcessList = document.getElementById('mpProcessList');
   const mpSaveProcs = document.getElementById('mpSaveProcs');
+  const mpOrderCard = document.getElementById('mpOrderCard');
+  const mpAddProcCard = document.getElementById('mpAddProcCard');
+  const mpManageMachinesCard = document.getElementById('mpManageMachinesCard');
 
   let currentOrder = { category: '', type: '' };
   let mpProcs = [];
+  const mpLastSel = {};
   let jenisList = [];
   async function mpLoadJenis() {
     try {
@@ -521,7 +525,17 @@ function showMasterProses() {
       const res = await fetch('/api/master/line', { headers: authHeaders() });
       const data = await res.json();
       const rows = Array.isArray(data.data) ? data.data : [];
-      if (mpLineSelect) mpLineSelect.innerHTML = '<option value="">Pilih line</option>' + rows.map(r => `<option value="${r.nama_line}">${r.nama_line}</option>`).join('');
+      if (mpLineSelect) {
+        mpLineSelect.innerHTML = '<option value="">Pilih line</option>' + rows.map(r => `<option value="${r.nama_line}">${r.nama_line}</option>`).join('');
+        try {
+          const focus = sessionStorage.getItem('mpLineFocus');
+          if (focus) {
+            mpLineSelect.value = focus;
+            mpLineSelect.dispatchEvent(new Event('change'));
+            sessionStorage.removeItem('mpLineFocus');
+          }
+        } catch {}
+      }
     } catch {}
   }
 
@@ -530,24 +544,49 @@ function showMasterProses() {
       const res = await fetch('/api/master/proses_produksi', { headers: authHeaders() });
       const data = await res.json();
       const rows = Array.isArray(data && data.data) ? data.data : [];
+      const list = rows.map(r => r.nama).filter(Boolean);
+      const fallback = ['Fusing','Jahit kupnat','Jahit lipit','Jahit Saku Patch','Jahit Saku Welt','Jahit Saku Kangaroo','Jahit Saku Samping','Jahit Saku Belakang','Jahit Plaket','Jahit Panel Badan','Sambung Bahu','Jahit Sisi Badan','Jahit Pesak','Pasang Lengan','Jahit Kerah','Jahit Tudung','Pasang Manset','Pasang Rib Leher','Pasang Rib Lengan','Pasang Rib Bawah','Pasang Ban Pinggang','Pasang Elastik / Drawstring','Pasang Resleting','Pasang Lining','Satukan Shell & Lining','Jahit Ban Bawah','Kelim Lengan','Kelim Badan','Kelim Kaki','Overdeck','Overstitch','Topstitch','Bartack Penguat','Jahit Lubang Kancing','Pasang Kancing','Pasang Eyelet','Press'];
+      const finalList = list.length ? list : fallback;
       if (mpProcessSelect) {
-        mpProcessSelect.innerHTML = '<option value="">Pilih proses</option>' + rows.map(r => `<option value="${r.nama}">${r.nama}</option>`).join('');
+        mpProcessSelect.innerHTML = '<option value="">Pilih proses</option>' + finalList.map(n => `<option value="${n}">${n}</option>`).join('');
       }
     } catch {}
   }
 
   async function mpRefresh(line) {
-    if (!line) { mpLineDesc.textContent = '—'; mpOrderCategory.textContent = '—'; mpOrderType.textContent = '—'; mpOrderProcCount.textContent = '0'; mpProcessSections.innerHTML = ''; if (mpProcessList) mpProcessList.innerHTML = ''; return; }
+    if (!line) {
+      mpLineDesc.textContent = '—';
+      mpOrderCategory.textContent = '—';
+      mpOrderType.textContent = '—';
+      mpOrderProcCount.textContent = '0';
+      if (mpProcessSections) mpProcessSections.innerHTML = '';
+      if (mpProcessList) mpProcessList.innerHTML = '';
+      if (mpAddProcCard) mpAddProcCard.classList.add('d-none');
+      if (mpManageMachinesCard) mpManageMachinesCard.classList.add('d-none');
+      if (mpProcessSelect) mpProcessSelect.setAttribute('disabled','true');
+      if (mpAddProcess) mpAddProcess.setAttribute('disabled','true');
+      return;
+    }
     mpLineDesc.textContent = `Line terpilih: ${line}`;
     try {
       const res = await fetch(`/api/style/order/${encodeURIComponent(line)}`, { headers: authHeaders() });
       const data = await res.json();
       const order = data && data.order ? data.order : null;
       currentOrder = order ? { category: order.category || '', type: order.type || '' } : { category: '', type: '' };
-      mpProcs = Array.isArray(data && data.processes) ? data.processes.slice() : [];
+      const serverProcs = Array.isArray(data && data.processes) ? data.processes.slice() : [];
+      if (serverProcs.length > 0) mpProcs = serverProcs;
+      const defs = (data && data.defaults) || {};
+      Object.keys(defs).forEach(name => {
+        const d = defs[name] || {};
+        mpLastSel[`${line}|${name}`] = { type: d.type || '', qty: Number(d.qty || 1) };
+      });
       mpOrderCategory.textContent = currentOrder.category || '—';
       mpOrderType.textContent = currentOrder.type || '—';
       mpOrderProcCount.textContent = String(mpProcs.length);
+      if (mpAddProcCard) mpAddProcCard.classList.remove('d-none');
+      if (mpManageMachinesCard) mpManageMachinesCard.classList.remove('d-none');
+      if (mpProcessSelect) mpProcessSelect.removeAttribute('disabled');
+      if (mpAddProcess) mpAddProcess.removeAttribute('disabled');
       const opts = jenisList.map(n => `<option value="${n}">${n}</option>`).join('');
       const machinesRes = await fetch(`/api/lines/${encodeURIComponent(line)}`, { headers: authHeaders() });
       const machData = await machinesRes.json();
@@ -560,6 +599,7 @@ function showMasterProses() {
         const rows = machines.filter(m => String(m.job) === String(p.name)).map((m, j) => `<tr data-idx="${j}"><td>${m.machine}</td><td>${m.status}</td></tr>`).join('');
         return `<div class="border rounded p-3"><div class="d-flex justify-content-between align-items-center mb-2"><div class="fw-semibold">${p.name}</div><i class="bi bi-cpu"></i></div><div class="row g-2 align-items-end"><div class="col-md-6"><label class="form-label">Jenis Mesin</label><select id="${selId}" class="form-select"><option value="">Pilih jenis mesin</option>${opts}</select></div><div class="col-md-3"><label class="form-label">Jumlah Mesin</label><input type="number" id="${qtyId}" class="form-control" min="1" value="1" /></div><div class="col-md-3"><button id="${addId}" class="btn btn-accent w-100">Tambah Mesin</button></div></div><div class="table-responsive mt-3"><table class="table table-sm table-striped text-center"><thead><tr><th>Mesin</th><th>Status</th></tr></thead><tbody id="${tableId}">${rows || ''}</tbody></table></div></div>`;
       }).join('');
+      applyLastSelections(line);
       renderMpProcessList();
     } catch {}
   }
@@ -579,9 +619,29 @@ function showMasterProses() {
         const rows = machines.filter(m => String(m.job) === String(p.name)).map((m, j) => `<tr data-idx="${j}"><td>${m.machine}</td><td>${m.status}</td></tr>`).join('');
         return `<div class="border rounded p-3"><div class="d-flex justify-content-between align-items-center mb-2"><div class="fw-semibold">${p.name}</div><i class="bi bi-cpu"></i></div><div class="row g-2 align-items-end"><div class="col-md-6"><label class="form-label">Jenis Mesin</label><select id="${selId}" class="form-select"><option value="">Pilih jenis mesin</option>${opts}</select></div><div class="col-md-3"><label class="form-label">Jumlah Mesin</label><input type="number" id="${qtyId}" class="form-control" min="1" value="1" /></div><div class="col-md-3"><button id="${addId}" class="btn btn-accent w-100">Tambah Mesin</button></div></div><div class="table-responsive mt-3"><table class="table table-sm table-striped text-center"><thead><tr><th>Mesin</th><th>Status</th></tr></thead><tbody id="${tableId}">${rows || ''}</tbody></table></div></div>`;
       }).join('');
+      applyLastSelections(line);
     } catch { mpProcessSections.innerHTML = ''; }
   }
 
+  function applyLastSelections(line) {
+    mpProcs.forEach((p, idx) => {
+      const k = `${line}|${p.name}`;
+      const prev = mpLastSel[k];
+      const sel = document.getElementById(`mpJenis-${idx}`);
+      const qtyEl = document.getElementById(`mpQty-${idx}`);
+      if (!sel || !qtyEl) return;
+      if (prev && prev.type) {
+        if (!sel.querySelector(`option[value="${prev.type}"]`)) {
+          const opt = document.createElement('option');
+          opt.value = prev.type;
+          opt.textContent = prev.type;
+          sel.appendChild(opt);
+        }
+        sel.value = prev.type;
+      }
+      if (prev && prev.qty) qtyEl.value = String(prev.qty);
+    });
+  }
   function renderMpProcessList() {
     if (!mpProcessList) return;
     mpProcessList.innerHTML = mpProcs.map((p, idx) => {
@@ -593,7 +653,20 @@ function showMasterProses() {
   }
 
   if (mpLineSelect) mpLineSelect.addEventListener('change', () => { const v = mpLineSelect.value; mpRefresh(v); });
-  if (mpAddProcess) mpAddProcess.addEventListener('click', () => { const name = mpProcessSelect && mpProcessSelect.value ? mpProcessSelect.value.trim() : ''; if (!name) return; mpProcs.push({ name }); if (mpProcessSelect) mpProcessSelect.value = ''; renderMpProcessList(); });
+  if (mpSaveProcs) { try { mpSaveProcs.classList.add('d-none'); } catch {} }
+  if (mpAddProcess) mpAddProcess.addEventListener('click', async () => {
+    const name = mpProcessSelect && mpProcessSelect.value ? mpProcessSelect.value.trim() : '';
+    if (!name) return;
+    mpProcs.push({ name });
+    if (mpProcessSelect) mpProcessSelect.value = '';
+    renderMpProcessList();
+    const line = mpLineSelect && mpLineSelect.value ? mpLineSelect.value : '';
+    if (!line) return;
+    try {
+      await fetch('/api/style/process', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ line, name }) });
+      renderMpSectionsLocal(line);
+    } catch {}
+  });
   if (mpSaveProcs) mpSaveProcs.addEventListener('click', async () => {
     const line = mpLineSelect && mpLineSelect.value ? mpLineSelect.value : '';
     if (!line) { alert('Pilih line terlebih dahulu.'); return; }
@@ -611,10 +684,33 @@ function showMasterProses() {
       const pidx = card ? parseInt(card.getAttribute('data-mp-proc'), 10) : -1;
       if (pidx < 0) return;
       const act = actBtn.getAttribute('data-mp-act');
-      if (act === 'delete') { mpProcs.splice(pidx, 1); renderMpProcessList(); }
+      if (act === 'delete') {
+        const oldName = mpProcs[pidx] ? mpProcs[pidx].name : '';
+        mpProcs.splice(pidx, 1);
+        renderMpProcessList();
+        const line = mpLineSelect && mpLineSelect.value ? mpLineSelect.value : '';
+        if (line) {
+          try {
+            await fetch('/api/style/process', { method: 'DELETE', headers: authHeaders(), body: JSON.stringify({ line, name: oldName }) });
+            await mpRefresh(line);
+          } catch {}
+        }
+      }
       if (act === 'edit') {
         const name = prompt('Edit nama proses', mpProcs[pidx].name || '');
-        if (name) { mpProcs[pidx].name = name.trim(); renderMpProcessList(); }
+        if (name) {
+          const oldName = mpProcs[pidx].name || '';
+          const newName = name.trim();
+          mpProcs[pidx].name = newName;
+          renderMpProcessList();
+          const line = mpLineSelect && mpLineSelect.value ? mpLineSelect.value : '';
+          if (line) {
+            try {
+              await fetch('/api/style/process', { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ line, oldName, newName }) });
+              await mpRefresh(line);
+            } catch {}
+          }
+        }
       }
       return;
     }
@@ -628,10 +724,27 @@ function showMasterProses() {
     const procCards = mpProcessSections.querySelectorAll('.border.rounded.p-3');
     const titleEl = procCards[idx].querySelector('.fw-semibold');
     const processName = titleEl ? titleEl.textContent : '';
-    if (!line || !machineType || !processName) return;
+    if (!line) { alert('Pilih line terlebih dahulu.'); return; }
+    if (!processName) { alert('Nama proses tidak ditemukan.'); return; }
+    if (!machineType) { alert('Pilih jenis mesin terlebih dahulu.'); return; }
     try {
       await fetch('/api/process/machines', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ line, processName, machineType, qty }) });
-      await mpRefresh(line);
+      const prevType = machineType;
+      const prevQty = qty;
+      mpLastSel[`${line}|${processName}`] = { type: prevType, qty: prevQty };
+      await renderMpSectionsLocal(line);
+      try {
+        const sel2 = document.getElementById(`mpJenis-${idx}`);
+        const qty2 = document.getElementById(`mpQty-${idx}`);
+        if (sel2 && !sel2.querySelector(`option[value="${prevType}"]`)) {
+          const opt = document.createElement('option');
+          opt.value = prevType;
+          opt.textContent = prevType;
+          sel2.appendChild(opt);
+        }
+        if (sel2) sel2.value = prevType;
+        if (qty2) qty2.value = String(prevQty);
+      } catch {}
       alert('Mesin ditambahkan');
     } catch { alert('Gagal menambahkan mesin'); }
   });
@@ -685,21 +798,45 @@ function showMasterOrder() {
       const rows = Array.isArray(data && data.data) ? data.data : [];
       if (tbody) {
         tbody.innerHTML = rows.map(r => {
-          const det = Array.isArray(r.processes) ? r.processes.map(p => `${p.name} (${p.machines})`).join(', ') : '';
-          return `<tr><td>${r.line}</td><td>${r.category || ''}</td><td>${r.type || ''}</td><td>${r.totalProcesses || 0}</td><td>${r.totalMachines || 0}</td><td>${det || '—'}</td></tr>`;
+          const hasOrder = !!(r && r.type && String(r.type).trim());
+          const det = hasOrder && Array.isArray(r.processes) ? r.processes.map(p => `${p.name} (${p.machines})`).join(', ') : '';
+          const acts = `<button class="btn btn-link p-0 me-2 text-warning" data-mo-act="edit" title="Edit"><i class="bi bi-pencil-square fs-5"></i></button><button class="btn btn-link p-0 text-danger" data-mo-act="delete" title="Hapus"><i class="bi bi-trash fs-5"></i></button>`;
+          return `<tr data-line="${r.line}"><td>${r.line}</td><td>${r.category || ''}</td><td>${r.type || ''}</td><td>${r.totalProcesses || 0}</td><td>${r.totalMachines || 0}</td><td>${det}</td><td>${acts}</td></tr>`;
         }).join('');
       }
     } catch {}
   })();
 }
 
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-mo-act]');
+  if (!btn) return;
+  const tr = btn.closest('tr');
+  const line = tr ? tr.getAttribute('data-line') : null;
+  const act = btn.getAttribute('data-mo-act');
+  if (!line) return;
+  if (act === 'edit') {
+    try { sessionStorage.setItem('route', 'master-proses'); sessionStorage.setItem('mpLineFocus', line); } catch {}
+    showMasterProses();
+    setRouteIndicator('master-proses');
+    return;
+  }
+  if (act === 'delete') {
+    if (!currentUser || currentUser.role !== 'tech_admin') return;
+    if (!confirm(`Hapus order untuk line ${line}?`)) return;
+    try {
+      await fetch('/api/master/order', { method: 'DELETE', headers: authHeaders(), body: JSON.stringify({ line }) });
+      showMasterOrder();
+    } catch {}
+  }
+});
 function setMmTab(tab) {
   mmTab = tab;
   const tabs = document.querySelectorAll('[data-mm-tab]');
   tabs.forEach(el => el.classList.toggle('active', el.getAttribute('data-mm-tab') === tab));
   const crumb = document.getElementById('mmCrumb');
   if (crumb) {
-    crumb.textContent = tab === 'kategori' ? 'Kategori Mesin' : (tab === 'jenis' ? 'Jenis Mesin' : 'Merk Mesin');
+    crumb.textContent = tab === 'jenis' ? 'Jenis Mesin' : 'Merk Mesin';
   }
   const addBtn = document.getElementById('mmAddBtn');
   if (addBtn) addBtn.classList.toggle('d-none', currentUser && currentUser.role === 'line_admin');
@@ -791,13 +928,7 @@ if (mcTaskSel) {
 
 async function fetchMmData() {
   try {
-    if (mmTab === 'kategori') {
-      const res = await fetch('/api/master/kategori', { headers: authHeaders() });
-      const data = await res.json();
-      mmRows = (data && data.data) || [];
-      mmJenisIndex = await fetchJenisIndex();
-      renderMmTable();
-    } else if (mmTab === 'jenis') {
+    if (mmTab === 'jenis') {
       const res = await fetch('/api/master/jenis', { headers: authHeaders() });
       const data = await res.json();
       mmRows = (data && data.data) || [];
@@ -932,13 +1063,7 @@ function renderMmTable() {
   const search = document.getElementById('mmSearch');
   const q = (search && search.value ? search.value.toLowerCase() : '').trim();
   if (!thead || !tbody) return;
-  if (mmTab === 'kategori') {
-    thead.innerHTML = '<tr><th>ID</th><th>Nama</th><th style="width:120px">Aksi</th></tr>';
-    const rows = mmRows.filter(r => !q || String(r.name).toLowerCase().includes(q));
-    tbody.innerHTML = rows.map(r => `<tr data-id="${r.id_kategori}"><td>${r.id_kategori}</td><td>${r.name}</td><td>
-      ${currentUser && currentUser.role === 'tech_admin' ? `<button class="btn btn-link p-0 me-2 text-warning" title="Edit" data-mm-act="edit"><i class="bi bi-pencil-square fs-5"></i></button><button class="btn btn-link p-0 text-danger" title="Hapus" data-mm-act="delete"><i class="bi bi-trash fs-5"></i></button>` : ''}
-    </td></tr>`).join('');
-  } else if (mmTab === 'jenis') {
+  if (mmTab === 'jenis') {
     thead.innerHTML = '<tr><th>ID</th><th>Nama</th><th style="width:120px">Aksi</th></tr>';
     const rows = mmRows.filter(r => !q || String(r.name).toLowerCase().includes(q));
     tbody.innerHTML = rows.map(r => `<tr data-id="${r.id_jnsmesin}"><td>${r.id_jnsmesin}</td><td>${r.name}</td><td>
@@ -965,16 +1090,7 @@ document.addEventListener('click', async (e) => {
   const tr = actBtn.closest('tr');
   const id = tr ? tr.getAttribute('data-id') : null;
   const act = actBtn.getAttribute('data-mm-act');
-  if (mmTab === 'kategori') {
-    if (act === 'edit') {
-      const row = mmRows.find(r => String(r.id_kategori) === String(id));
-      openMmModal('edit', 'kategori', { id, name: row ? row.name : '' });
-      return;
-    } else if (act === 'delete') {
-      if (!confirm('Hapus kategori?')) return;
-      await fetch(`/api/master/kategori/${id}`, { method: 'DELETE', headers: authHeaders() });
-    }
-  } else if (mmTab === 'jenis') {
+  if (mmTab === 'jenis') {
     if (act === 'edit') {
       const row = mmRows.find(r => String(r.id_jnsmesin) === String(id));
       openMmModal('edit', 'jenis', { id, name: row ? row.name : '' });
@@ -1017,13 +1133,10 @@ function openMmModal(action, entity, data) {
   const form = document.getElementById('mmForm');
   if (!modal || !title || !form) return;
   let t = '';
-  if (entity === 'kategori') t = action === 'add' ? 'Tambah Kategori Mesin' : 'Edit Kategori Mesin';
-  else if (entity === 'jenis') t = action === 'add' ? 'Tambah Jenis Mesin' : 'Edit Jenis Mesin';
+  if (entity === 'jenis') t = action === 'add' ? 'Tambah Jenis Mesin' : 'Edit Jenis Mesin';
   else t = action === 'add' ? 'Tambah Merk Mesin' : 'Edit Merk Mesin';
   title.textContent = t;
-  if (entity === 'kategori') {
-    form.innerHTML = `<div><label class="form-label">Nama</label><input type="text" class="form-control" id="mmName" value="${data && data.name ? String(data.name) : ''}"></div>`;
-  } else if (entity === 'jenis') {
+  if (entity === 'jenis') {
     form.innerHTML = `<div><label class="form-label">Nama</label><input type="text" class="form-control" id="mmName" value="${data && data.name ? String(data.name) : ''}"></div>`;
   } else {
     const opts = (mmJenisIndex || []).map(j => `<option value="${j.id_jnsmesin}" ${data && data.id_jnsmesin == j.id_jnsmesin ? 'selected' : ''}>${j.name}</option>`).join('');
@@ -1052,13 +1165,7 @@ if (mmModalSave) mmModalSave.addEventListener('click', async () => {
   const nameEl = document.getElementById('mmName');
   const name = nameEl ? nameEl.value.trim() : '';
   if (!name) return;
-  if (entity === 'kategori') {
-    if (mmModalAction === 'add') {
-      await fetch('/api/master/kategori', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name }) });
-    } else {
-      await fetch(`/api/master/kategori/${mmModalEditId}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ name }) });
-    }
-  } else if (entity === 'jenis') {
+  if (entity === 'jenis') {
     if (mmModalAction === 'add') {
       await fetch('/api/master/jenis', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ name }) });
     } else {

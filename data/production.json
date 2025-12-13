@@ -1,6 +1,61 @@
 {
   "lines": {
-    "LINE 10A": [],
+    "LINE 10A": [
+      {
+        "line": "LINE 10A",
+        "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-1",
+        "job": "Jahit Saku Belakang",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-13T17:12:38.229Z"
+      },
+      {
+        "line": "LINE 10A",
+        "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-2",
+        "job": "Jahit Saku Belakang",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-13T17:12:38.230Z"
+      },
+      {
+        "line": "LINE 10A",
+        "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-1",
+        "job": "Jahit Saku Kangaroo",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-13T17:15:08.295Z"
+      },
+      {
+        "line": "LINE 10A",
+        "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-2",
+        "job": "Jahit Saku Kangaroo",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-13T17:15:08.296Z"
+      },
+      {
+        "line": "LINE 10A",
+        "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-1",
+        "job": "Jahit Saku Patch",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-13T17:15:44.690Z"
+      },
+      {
+        "line": "LINE 10A",
+        "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-2",
+        "job": "Jahit Saku Patch",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-13T17:15:44.692Z"
+      }
+    ],
     "LINE 10B": [],
     "LINE 11A": [],
     "LINE 11B": [],
@@ -84,159 +139,241 @@
   "meta": {
     "LINE 10A": {
       "style": "Kemeja",
-      "status": "active"
+      "status": "active",
+      "processes": [
+        {
+          "name": "Jahit Saku Patch"
+        }
+      ],
+      "defaults": {}
     },
     "LINE 10B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 11A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 11B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 12B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 1A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 1B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 2A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 2B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 3A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 3B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 4A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 5A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 5B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 6A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 6B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 7A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 7B": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 7C": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "LINE 8A": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Danau Toba": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Raja Ampat": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Gunung Bromo": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Labuan Bajo": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Nusa Penida": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Kawah Ijen": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Pulau Padar": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Pink Beach": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Gunung Rinjani": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Gunung Semeru": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Kepulauan Seribu": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Pulau Weh": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Bukit Lawang": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Teluk Cenderawasih": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Situ Patenggang": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Pantai Kuta": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Pantai Nihiwatu": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Pantai Parangtritis": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     },
     "Danau Sentani": {
       "style": null,
-      "status": "active"
+      "status": "active",
+      "processes": [],
+      "defaults": {}
     }
   }
 }

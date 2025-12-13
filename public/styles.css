@@ -218,3 +218,6 @@ body.theme-midnight .count-box { background:#111827; border-color:#1F2A44; }
 }
 .btn-accent:focus { outline: none; box-shadow: 0 0 0 4px var(--accent-soft); }
 .btn-accent:hover { filter: brightness(0.95); }
+
+/* Master Proses: pastikan teks tombol tidak terbungkus */
+#mpAddProcess { white-space: nowrap; flex-shrink: 0; }

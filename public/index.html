@@ -138,7 +138,7 @@
               <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="#" data-nav="dashboard">Dashboard</a></li>
                 <li class="breadcrumb-item">Master Mesin</li>
-                <li class="breadcrumb-item active" id="mmCrumb">Kategori Mesin</li>
+                <li class="breadcrumb-item active" id="mmCrumb">Jenis Mesin</li>
               </ol>
             </nav>
           </div>
@@ -147,8 +147,7 @@
               <div class="card-header d-flex justify-content-between align-items-center">
                 <div class="fw-semibold">Master Mesin</div>
                 <div class="segmented-toggle" id="mmTabs">
-                  <button class="toggle-btn active" data-mm-tab="kategori">Kategori Mesin</button>
-                  <button class="toggle-btn" data-mm-tab="jenis">Jenis Mesin</button>
+                  <button class="toggle-btn active" data-mm-tab="jenis">Jenis Mesin</button>
                   <button class="toggle-btn" data-mm-tab="merk">Merk Mesin</button>
                 </div>
               </div>
@@ -279,7 +278,7 @@
                     <div id="mpLineDesc" class="text-muted">—</div>
                   </div>
                 </div>
-                <div class="card p-3 mt-3">
+                <div class="card p-3 mt-3" id="mpOrderCard">
                   <div class="fw-semibold mb-2">Order Style (Read-only)</div>
                   <div class="row g-3">
                     <div class="col-md-4">
@@ -293,18 +292,15 @@
                     </div>
                   </div>
                 </div>
-                <div class="card p-3 mt-3">
+                <div class="card p-3 mt-3 d-none" id="mpAddProcCard">
                   <div class="fw-semibold mb-2">2. Tambahkan Proses Produksi</div>
-                  <div class="d-flex gap-2 mb-3">
-                    <select id="mpProcessSelect" class="form-select" style="min-width: 240px"><option value="">Pilih proses</option></select>
-                    <button id="mpAddProcess" class="btn btn-accent">Tambah Proses</button>
+                  <div class="d-flex align-items-center mb-2">
+                    <select id="mpProcessSelect" class="form-select flex-grow-1 me-3" disabled><option value="">Pilih proses</option></select>
+                    <button id="mpAddProcess" class="btn btn-accent btn-sm" disabled>Tambah Proses</button>
                   </div>
                   <div id="mpProcessList" class="vstack gap-2"></div>
-                  <div class="d-flex justify-content-end mt-2">
-                    <button id="mpSaveProcs" class="btn btn-outline-primary">Simpan Daftar Proses</button>
-                  </div>
                 </div>
-                <div class="card p-3 mt-3">
+                <div class="card p-3 mt-3 d-none" id="mpManageMachinesCard">
                   <div class="fw-semibold mb-2">3. Kelola Mesin per Proses</div>
                   <div id="mpProcessSections" class="vstack gap-3"></div>
                 </div>
@@ -332,6 +328,7 @@
                         <th>Total Proses</th>
                         <th>Total Mesin</th>
                         <th>Rincian Proses</th>
+                        <th>Aksi</th>
                       </tr>
                     </thead>
                     <tbody id="moTbody"></tbody>

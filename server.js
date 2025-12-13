@@ -300,40 +300,6 @@ app.get('/api/debug/user/:username', async (req, res) => {
   }
 });
 
-app.get('/api/master/kategori', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  const rows = await db.getKategoriMaster();
-  res.json({ data: rows });
-});
-
-app.post('/api/master/kategori', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  const { name } = req.body || {};
-  if (!name) return res.status(400).json({ error: 'name wajib' });
-  const row = await db.createKategoriMaster({ name });
-  res.json({ ok: true, data: row });
-});
-
-app.put('/api/master/kategori/:id', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  const { name } = req.body || {};
-  if (!name) return res.status(400).json({ error: 'name wajib' });
-  await db.updateKategoriMaster(req.params.id, { name });
-  res.json({ ok: true });
-});
-
-app.delete('/api/master/kategori/:id', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  await db.deleteKategoriMaster(req.params.id);
-  res.json({ ok: true });
-});
 
 app.get('/api/master/jenis', async (req, res) => {
   const user = await getAuthUser(req, res);
@@ -438,10 +404,43 @@ app.post('/api/style/order', async (req, res) => {
   if (!user) return;
   const { category, type, processes, line } = req.body || {};
   if (!line) return res.status(400).json({ error: 'line wajib' });
-  if (!canEditLine(user, line)) return res.status(403).json({ error: 'forbidden' });
-  await db.saveStyleOrder({ line, category, type, processes });
+  const result = await db.saveStyleOrder({ line, category, type, processes });
   await emitState();
-  res.json({ ok: true });
+  if (result && result.ok === true) return res.json({ ok: true });
+  return res.status(400).json({ ok: false, error: 'gagal_menyimpan_order_style' });
+});
+
+app.post('/api/style/process', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const { line, name } = req.body || {};
+  if (!line || !name) return res.status(400).json({ error: 'line_name_wajib' });
+  if (!canEditLine(user, line) && user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const result = await db.addStyleProcess({ line, name });
+  await emitState();
+  res.json(result);
+});
+
+app.delete('/api/style/process', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const { line, name } = req.body || {};
+  if (!line || !name) return res.status(400).json({ error: 'line_name_wajib' });
+  if (!canEditLine(user, line) && user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const result = await db.deleteStyleProcess({ line, name });
+  await emitState();
+  res.json(result);
+});
+
+app.put('/api/style/process', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const { line, oldName, newName } = req.body || {};
+  if (!line || !oldName || !newName) return res.status(400).json({ error: 'line_old_new_wajib' });
+  if (!canEditLine(user, line) && user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const result = await db.renameStyleProcess({ line, oldName, newName });
+  await emitState();
+  res.json(result);
 });
 
 app.get('/api/style/order/:line', async (req, res) => {
@@ -501,6 +500,17 @@ app.get('/api/master/order', async (req, res) => {
   if (!user) return;
   const data = await db.getMasterOrderSummary();
   res.json({ data });
+});
+
+app.delete('/api/master/order', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { line } = req.body || {};
+  if (!line) return res.status(400).json({ error: 'line_wajib' });
+  const result = await db.deleteMasterOrderForLine(line);
+  await emitState();
+  res.json(result);
 });
 
 // Admin: migrasi legacy tables ke master dan drop
