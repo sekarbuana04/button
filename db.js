@@ -176,11 +176,11 @@ async function ensureButtonMasterSchema() {
   } catch {}
   try {
     await poolButton.execute(
-      'CREATE TABLE IF NOT EXISTS merk (\n' +
+      'CREATE TABLE IF NOT EXISTS merk_mesin (\n' +
       '  id_merk INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  name VARCHAR(128),\n' +
       '  id_jnsmesin INT NULL,\n' +
-      '  CONSTRAINT fk_jenis_mesin FOREIGN KEY (id_jnsmesin) REFERENCES jenis_mesin(id_jnsmesin)\n' +
+      '  CONSTRAINT fk_mm_jenis FOREIGN KEY (id_jnsmesin) REFERENCES jenis_mesin(id_jnsmesin)\n' +
       ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
   } catch {}
@@ -202,7 +202,88 @@ async function ensureButtonMasterSchema() {
       ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
   } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS master_styles (\n' +
+      '  id_style INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  id_line INT NULL,\n' +
+      '  category VARCHAR(32),\n' +
+      '  style_nama VARCHAR(128),\n' +
+      '  created_at DATETIME NULL\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS style_proses (\n' +
+      '  id_proses INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  id_style INT,\n' +
+      '  nama_proses VARCHAR(128)\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS style_proses_mesin (\n' +
+      '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  id_proses INT,\n' +
+      '  jenis_mesin VARCHAR(128),\n' +
+      '  qty INT\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS proses_mesin (\n' +
+      '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  id_proses INT,\n' +
+      '  jenis_mesin VARCHAR(128),\n' +
+      '  qty INT\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS master_mesin (\n' +
+      '  id_mesin INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  id_merk INT NULL,\n' +
+      '  id_jnsmesin INT NULL,\n' +
+      '  id_kategori INT NULL\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
   try { await poolButton.execute('ALTER TABLE style_order MODIFY id_jenis_pakaian INT NULL DEFAULT NULL'); } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS proses_produksi (\n' +
+      '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  nama VARCHAR(128) UNIQUE\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+    const [cnt] = await poolButton.query('SELECT COUNT(*) AS c FROM proses_produksi');
+    const c = (Array.isArray(cnt) && cnt[0] && (cnt[0].c || cnt[0].C)) ? Number(cnt[0].c || cnt[0].C) : 0;
+    if (!c) {
+      const list = [
+        'Fusing','Jahit kupnat','Jahit lipit','Jahit Saku Patch','Jahit Saku Welt','Jahit Saku Kangaroo','Jahit Saku Samping','Jahit Saku Belakang','Jahit Plaket','Jahit Panel Badan','Sambung Bahu','Jahit Sisi Badan','Jahit Pesak','Pasang Lengan','Jahit Kerah','Jahit Tudung','Pasang Manset','Pasang Rib Leher','Pasang Rib Lengan','Pasang Rib Bawah','Pasang Ban Pinggang','Pasang Elastik / Drawstring','Pasang Resleting','Pasang Lining','Satukan Shell & Lining','Jahit Ban Bawah','Kelim Lengan','Kelim Badan','Kelim Kaki','Overdeck','Overstitch','Topstitch','Bartack Penguat','Jahit Lubang Kancing','Pasang Kancing','Pasang Eyelet','Press'
+      ];
+      for (const nm of list) { try { await poolButton.execute('INSERT IGNORE INTO proses_produksi (nama) VALUES (?)', [nm]); } catch {} }
+    }
+  } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS master_orders (\n' +
+      '  id_order INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  id_line INT NOT NULL,\n' +
+      '  category VARCHAR(32),\n' +
+      '  type VARCHAR(128),\n' +
+      '  total_processes INT DEFAULT 0,\n' +
+      '  total_machines INT DEFAULT 0,\n' +
+      '  updated_at DATETIME,\n' +
+      '  UNIQUE KEY uniq_line (id_line),\n' +
+      '  CONSTRAINT fk_mo_line FOREIGN KEY (id_line) REFERENCES master_lines(id_line)\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
 }
 
 async function loadFromMySQL() {
@@ -266,9 +347,12 @@ async function getLineLive(line) {
     const out = [];
     if (styleId != null) {
       const [sp] = await poolButton.query('SELECT id_proses, nama_proses FROM style_proses WHERE id_style = ? ORDER BY id_proses ASC', [styleId]);
-      for (const p of (Array.isArray(sp) ? sp : [])) {
-        const [cnt] = await poolButton.query('SELECT qty FROM style_proses_mesin WHERE id_proses = ?', [p.id_proses]);
-        const qty = Array.isArray(cnt) && cnt[0] && (cnt[0].qty != null) ? Number(cnt[0].qty) : 0;
+  for (const p of (Array.isArray(sp) ? sp : [])) {
+        let qty = 0;
+        try {
+          const [cnt2] = await poolButton.query('SELECT SUM(qty) AS c FROM proses_mesin WHERE id_proses = ?', [p.id_proses]);
+          qty = (Array.isArray(cnt2) && cnt2[0] && (cnt2[0].c || cnt2[0].C)) ? Number(cnt2[0].c || cnt2[0].C) : 0;
+        } catch {}
         for (let i = 1; i <= qty; i++) {
           out.push({ line, machine: `${line}-${p.nama_proses}-${i}`, job: p.nama_proses || 'Unknown', status: 'active', good: 0, reject: 0, updatedAt: new Date().toISOString() });
         }
@@ -410,6 +494,16 @@ async function deleteMerkMaster(id) {
     await poolButton.execute('DELETE FROM merk WHERE id_merk = ?', [id]);
   }
   return { ok: true };
+}
+
+async function getProsesProduksi() {
+  await ensureButtonMasterSchema();
+  try {
+    const [rows] = await poolButton.query('SELECT id, nama FROM proses_produksi ORDER BY nama ASC');
+    return rows.map(r => ({ id: r.id, nama: r.nama }));
+  } catch {
+    return [];
+  }
 }
 
 async function getMasterLine() {
@@ -595,11 +689,34 @@ function setLineStatus(line, status) {
 
 async function tableExists(poolConn, tableName) {
   try {
-    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
+    const [curDbRows] = await poolConn.query('SELECT DATABASE() AS db');
+    const dbname = (Array.isArray(curDbRows) && curDbRows[0] && (curDbRows[0].db || curDbRows[0].DB)) ? curDbRows[0].db : (process.env.BUTTON_DB_NAME || 'button_db');
     const [rows] = await poolConn.query('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [dbname, tableName]);
     const c = (rows && rows[0] && (rows[0].c || rows[0].C)) || 0;
     return c > 0;
   } catch { return false; }
+}
+
+async function dropReferencingForeignKeys(poolConn, targetTable) {
+  try {
+    const [curDbRows] = await poolConn.query('SELECT DATABASE() AS db');
+    const dbname = (Array.isArray(curDbRows) && curDbRows[0] && (curDbRows[0].db || curDbRows[0].DB)) ? curDbRows[0].db : (process.env.BUTTON_DB_NAME || 'button_db');
+    const [fkRows] = await poolConn.query(
+      'SELECT TABLE_NAME AS tbl, CONSTRAINT_NAME AS fk FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME = ?',
+      [dbname, targetTable]
+    );
+    for (const r of (Array.isArray(fkRows) ? fkRows : [])) {
+      const tbl = r.tbl || r.TABLE_NAME;
+      const fk = r.fk || r.CONSTRAINT_NAME;
+      if (!tbl || !fk) continue;
+      try { await poolConn.execute(`ALTER TABLE \`${tbl}\` DROP FOREIGN KEY \`${fk}\``); } catch {}
+    }
+  } catch {}
+}
+
+async function dropTableWithFk(poolConn, tableName) {
+  await dropReferencingForeignKeys(poolConn, tableName);
+  try { await poolConn.execute(`DROP TABLE IF EXISTS \`${tableName}\``); } catch {}
 }
 
 async function migrateLegacyTables() {
@@ -651,9 +768,43 @@ async function migrateLegacyTables() {
       }
     }
   } catch {}
-  try { await poolConn.execute('DROP TABLE IF EXISTS machines'); } catch {}
-  try { await poolConn.execute('DROP TABLE IF EXISTS lines'); } catch {}
-  try { await poolConn.execute('DROP TABLE IF EXISTS merk'); } catch {}
+  await dropTableWithFk(poolConn, 'machines');
+  await dropTableWithFk(poolConn, 'lines');
+  await dropTableWithFk(poolConn, 'merk');
+  try {
+    // Merge master_line into master_lines if exists, then drop duplicate
+    if (await tableExists(poolConn, 'master_line')) {
+      const [rows] = await poolConn.query('SELECT nama_line FROM master_line');
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        if (!r.nama_line) continue;
+        try {
+          const [ex] = await poolConn.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [r.nama_line]);
+          if (!(Array.isArray(ex) && ex.length)) {
+            await poolConn.execute('INSERT INTO master_lines (nama_line) VALUES (?)', [r.nama_line]);
+          }
+        } catch {}
+      }
+      await dropTableWithFk(poolConn, 'master_line');
+    }
+  } catch {}
+  try {
+    // Merge kategori_mesin into kategori if exists, then drop duplicate
+    if (await tableExists(poolConn, 'kategori_mesin')) {
+      const [rows] = await poolConn.query('SELECT id_kategori, name FROM kategori_mesin');
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        if (!r.name) continue;
+        try {
+          const [ex] = await poolConn.query('SELECT id_kategori FROM kategori WHERE name = ? LIMIT 1', [r.name]);
+          if (!(Array.isArray(ex) && ex.length)) {
+            await poolConn.execute('INSERT INTO kategori (name) VALUES (?)', [r.name]);
+          }
+        } catch {}
+      }
+      await dropTableWithFk(poolConn, 'kategori_mesin');
+    }
+  } catch {}
+  await dropTableWithFk(poolConn, 'style_orders');
+  await dropTableWithFk(poolConn, 'style_processes');
   return { ok: true };
 }
 
@@ -665,8 +816,10 @@ module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLi
   getKategoriMaster, createKategoriMaster, updateKategoriMaster, deleteKategoriMaster,
   getJenisMesinMaster, createJenisMesinMaster, updateJenisMesinMaster, deleteJenisMesinMaster,
   getMerkMaster, createMerkMaster, updateMerkMaster, deleteMerkMaster,
+  getProsesProduksi,
   getMasterLine, createMasterLine, updateMasterLine, deleteMasterLine,
   saveStyleOrder, getStyleOrderByLine, addProcessMachines, getMasterOrderSummary,
+  deleteProcessMachines,
   migrateLegacyTables,
   isButtonDbReady };
 async function ensurePrimarySchema() {
@@ -693,24 +846,26 @@ async function refreshLinesFromMaster() {
 
 async function saveStyleOrder({ line, category, type, processes }) {
   if (DB_MYSQL) {
-    await ensurePrimarySchema();
-    const now = toSqlDatetime(new Date().toISOString());
-    const [rows] = await pool.execute('SELECT id FROM `style_orders` WHERE line_id = ? ORDER BY id DESC LIMIT 1', [line]);
-    let orderId;
-    if (rows && rows.length) {
-      const oid = rows[0].id;
-      await pool.execute('UPDATE `style_orders` SET category = ?, type = ?, created_at = ? WHERE id = ?', [category || '', type || '', now, oid]);
-      await pool.execute('DELETE FROM `style_processes` WHERE order_id = ?', [oid]);
-      orderId = oid;
-    } else {
-      const [ins] = await pool.execute('INSERT INTO `style_orders` (line_id, category, type, created_at) VALUES (?,?,?,?)', [line, category || '', type || '', now]);
-      orderId = ins.insertId;
-    }
-    let pos = 0;
-    for (const p of Array.isArray(processes) ? processes : []) {
-      await pool.execute('INSERT INTO `style_processes` (order_id, name, position) VALUES (?,?,?)', [orderId, String(p.name || ''), pos++]);
-    }
-    await pool.execute('INSERT INTO `lines` (id, style, status) VALUES (?,?,?) ON DUPLICATE KEY UPDATE style=VALUES(style)', [line, type || null, 'active']);
+    try {
+      await ensurePrimarySchema();
+      const now = toSqlDatetime(new Date().toISOString());
+      const [rows] = await pool.execute('SELECT id FROM `style_orders` WHERE line_id = ? ORDER BY id DESC LIMIT 1', [line]);
+      let orderId;
+      if (rows && rows.length) {
+        const oid = rows[0].id;
+        await pool.execute('UPDATE `style_orders` SET category = ?, type = ?, created_at = ? WHERE id = ?', [category || '', type || '', now, oid]);
+        await pool.execute('DELETE FROM `style_processes` WHERE order_id = ?', [oid]);
+        orderId = oid;
+      } else {
+        const [ins] = await pool.execute('INSERT INTO `style_orders` (line_id, category, type, created_at) VALUES (?,?,?,?)', [line, category || '', type || '', now]);
+        orderId = ins.insertId;
+      }
+      let pos = 0;
+      for (const p of Array.isArray(processes) ? processes : []) {
+        await pool.execute('INSERT INTO `style_processes` (order_id, name, position) VALUES (?,?,?)', [orderId, String(p.name || ''), pos++]);
+      }
+      await pool.execute('INSERT INTO `lines` (id, style, status) VALUES (?,?,?) ON DUPLICATE KEY UPDATE style=VALUES(style)', [line, type || null, 'active']);
+    } catch {}
   }
   try {
     await ensureButtonMasterSchema();
@@ -726,40 +881,38 @@ async function saveStyleOrder({ line, category, type, processes }) {
       } catch {}
     }
     try {
-      console.log('style_order_write_attempt', { line, type, lineId });
-        if (lineId != null) {
-          const [ex] = await poolButton.query('SELECT id_style FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
-          if (Array.isArray(ex) && ex.length) {
-            await poolButton.execute('UPDATE style_order SET style_nama = ? WHERE id_style = ?', [type || '', ex[0].id_style]);
-            console.log('style_order_update_ok', { id_style: ex[0].id_style });
-          } else {
-            await poolButton.execute('INSERT INTO style_order (style_nama, id_line, id_jenis_pakaian) VALUES (?, ?, NULL)', [type || '', lineId]);
-            console.log('style_order_insert_ok', { id_line: lineId });
-          }
-          const [cur] = await poolButton.query('SELECT id_style FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
-          const styleId = Array.isArray(cur) && cur[0] ? cur[0].id_style : null;
-          if (styleId != null && Array.isArray(processes)) {
-            for (let i = 0; i < processes.length; i++) {
-              const nm = String(processes[i].name || '').trim();
-              if (!nm) continue;
-              try {
-                const [p1] = await poolButton.query('SELECT id_proses FROM style_proses WHERE id_style = ? AND nama_proses = ? LIMIT 1', [styleId, nm]);
-                if (!(Array.isArray(p1) && p1.length)) {
-                  await poolButton.execute('INSERT INTO style_proses (id_style, nama_proses) VALUES (?, ?)', [styleId, nm]);
-                }
-              } catch {}
-            }
-          }
+      const now = toSqlDatetime(new Date().toISOString());
+      if (lineId != null) {
+        const [ex] = await poolButton.query('SELECT id_style FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+        if (Array.isArray(ex) && ex.length) {
+          await poolButton.execute('UPDATE master_styles SET category = ?, style_nama = ?, created_at = ? WHERE id_style = ?', [category || '', type || '', now, ex[0].id_style]);
         } else {
-          await poolButton.execute('INSERT INTO style_order (style_nama, id_jenis_pakaian) VALUES (?, NULL)', [type || '']);
-          console.log('style_order_insert_ok_no_line');
+          await poolButton.execute('INSERT INTO master_styles (id_line, category, style_nama, created_at) VALUES (?, ?, ?, ?)', [lineId, category || '', type || '', now]);
         }
+        const [cur] = await poolButton.query('SELECT id_style FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+        const styleId = Array.isArray(cur) && cur[0] ? cur[0].id_style : null;
+        if (styleId != null && Array.isArray(processes)) {
+          for (let i = 0; i < processes.length; i++) {
+            const nm = String(processes[i].name || '').trim();
+            if (!nm) continue;
+            try {
+              const [p1] = await poolButton.query('SELECT id_proses FROM style_proses WHERE id_style = ? AND nama_proses = ? LIMIT 1', [styleId, nm]);
+              if (!(Array.isArray(p1) && p1.length)) {
+                await poolButton.execute('INSERT INTO style_proses (id_style, nama_proses) VALUES (?, ?)', [styleId, nm]);
+              }
+            } catch {}
+          }
+        }
+      } else {
+        await poolButton.execute('INSERT INTO master_styles (id_line, category, style_nama, created_at) VALUES (NULL, ?, ?, ?)', [category || '', type || '', now]);
+      }
     } catch (e) { console.error('style_order_write_error', { message: String(e && e.message || e) }); }
   } catch {}
   state.meta = state.meta || {};
   const cur = state.meta[line] || { status: 'active' };
   state.meta[line] = { style: type || null, status: cur.status || 'active' };
   save();
+  try { await upsertMasterOrderForLine(line); } catch {}
   return { ok: true };
 }
 
@@ -778,11 +931,11 @@ async function getStyleOrderByLine(line) {
       } catch {}
     }
     if (lineId != null) {
-      const [so] = await poolButton.query('SELECT id_style, style_nama FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+      const [so] = await poolButton.query('SELECT id_style, style_nama, category FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
       const styleRow = Array.isArray(so) && so[0] ? so[0] : null;
       if (!styleRow) return { order: null, processes: [] };
       const [sp] = await poolButton.query('SELECT nama_proses FROM style_proses WHERE id_style = ? ORDER BY id_proses ASC', [styleRow.id_style]);
-      return { order: { category: '', type: styleRow.style_nama }, processes: (Array.isArray(sp) ? sp : []).map(r => ({ name: r.nama_proses })) };
+      return { order: { category: styleRow.category || '', type: styleRow.style_nama }, processes: (Array.isArray(sp) ? sp : []).map(r => ({ name: r.nama_proses })) };
     }
   } catch {}
   const curStyle = getLineStyle(line);
@@ -813,7 +966,7 @@ async function addProcessMachines({ line, processName, machineType, qty }) {
     if (lineId != null) {
       let styleId = null;
       try {
-        const [so] = await poolButton.query('SELECT id_style FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+        const [so] = await poolButton.query('SELECT id_style FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
         if (Array.isArray(so) && so.length) styleId = so[0].id_style;
       } catch {}
       if (styleId != null) {
@@ -829,37 +982,106 @@ async function addProcessMachines({ line, processName, machineType, qty }) {
           } catch {}
         }
         if (procId != null) {
-          try { await poolButton.execute('INSERT INTO style_proses_mesin (id_proses, jenis_mesin, qty) VALUES (?, ?, ?)', [procId, machineType || '', count]); } catch {}
+          try { await poolButton.execute('INSERT INTO proses_mesin (id_proses, jenis_mesin, qty) VALUES (?, ?, ?)', [procId, machineType || '', count]); } catch {}
         }
       }
     }
   } catch {}
+  try { await upsertMasterOrderForLine(line); } catch {}
   return { ok: true };
+}
+
+async function deleteProcessMachines({ line, processName, machineType }) {
+  try {
+    await ensureButtonMasterSchema();
+    let lineId = null;
+    try {
+      const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
+      if (Array.isArray(r1) && r1.length) lineId = r1[0].id_line;
+    } catch {}
+    if (lineId == null) return { ok: false };
+    let styleId = null;
+    try {
+      const [so] = await poolButton.query('SELECT id_style FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+      if (Array.isArray(so) && so.length) styleId = so[0].id_style;
+    } catch {}
+    if (styleId == null) return { ok: false };
+    let procId = null;
+    try {
+      const [p1] = await poolButton.query('SELECT id_proses FROM style_proses WHERE id_style = ? AND nama_proses = ? LIMIT 1', [styleId, processName]);
+      if (Array.isArray(p1) && p1.length) procId = p1[0].id_proses;
+    } catch {}
+    if (procId == null) return { ok: false };
+    try { await poolButton.execute('DELETE FROM proses_mesin WHERE id_proses = ? AND jenis_mesin = ?', [procId, machineType || '']); } catch {}
+    await upsertMasterOrderForLine(line);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function upsertMasterOrderForLine(line) {
+  try {
+    await ensureButtonMasterSchema();
+    let lineId = null;
+    try {
+      const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
+      if (Array.isArray(r1) && r1.length) lineId = r1[0].id_line;
+    } catch {}
+    if (lineId == null) return;
+    let styleId = null; let category = ''; let type = '';
+    try {
+      const [so] = await poolButton.query('SELECT id_style, category, style_nama FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
+      if (Array.isArray(so) && so.length) { styleId = so[0].id_style; category = so[0].category || ''; type = so[0].style_nama || ''; }
+    } catch {}
+    let totalProcesses = 0;
+    try {
+      if (styleId != null) {
+        const [spc] = await poolButton.query('SELECT COUNT(*) AS c FROM style_proses WHERE id_style = ?', [styleId]);
+        totalProcesses = (Array.isArray(spc) && spc[0] && (spc[0].c || spc[0].C)) ? Number(spc[0].c || spc[0].C) : 0;
+      }
+    } catch {}
+    let totalMachines = 0;
+    try {
+    if (styleId != null) {
+        try {
+          const [sum2] = await poolButton.query('SELECT SUM(qty) AS c FROM proses_mesin WHERE id_proses IN (SELECT id_proses FROM style_proses WHERE id_style = ?)', [styleId]);
+          totalMachines = (Array.isArray(sum2) && sum2[0] && (sum2[0].c || sum2[0].C)) ? Number(sum2[0].c || sum2[0].C) : 0;
+        } catch {}
+      }
+    } catch {}
+    const now = toSqlDatetime(new Date().toISOString());
+    await poolButton.execute(
+      'INSERT INTO master_orders (id_line, category, type, total_processes, total_machines, updated_at) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE category=VALUES(category), type=VALUES(type), total_processes=VALUES(total_processes), total_machines=VALUES(total_machines), updated_at=VALUES(updated_at)',
+      [lineId, category, type, totalProcesses, totalMachines, now]
+    );
+  } catch {}
 }
 
 async function getMasterOrderSummary() {
   try {
     await ensureButtonMasterSchema();
-    const [lines] = await poolButton.query('SELECT id_line, nama_line FROM master_lines');
+    const [rows] = await poolButton.query('SELECT L.nama_line AS line, O.category, O.type, O.total_processes, O.total_machines, L.id_line FROM master_lines L LEFT JOIN master_orders O ON O.id_line = L.id_line ORDER BY L.id_line ASC');
     const out = [];
-    for (const L of Array.isArray(lines) ? lines : []) {
-      let styleId = null; let styleName = '';
+    for (const r of Array.isArray(rows) ? rows : []) {
+      const idLine = r.id_line;
+      let styleId = null;
       try {
-        const [so] = await poolButton.query('SELECT id_style, style_nama FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [L.id_line]);
-        if (Array.isArray(so) && so.length) { styleId = so[0].id_style; styleName = so[0].style_nama || ''; }
-      } catch {}
-      let procs = [];
-      try {
-        if (styleId != null) { const [sp] = await poolButton.query('SELECT id_proses, nama_proses FROM style_proses WHERE id_style = ? ORDER BY id_proses ASC', [styleId]); procs = Array.isArray(sp) ? sp : []; }
+        const [so] = await poolButton.query('SELECT id_style FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [idLine]);
+        if (Array.isArray(so) && so.length) styleId = so[0].id_style;
       } catch {}
       const procDetails = [];
-      for (const p of procs) {
-        let qty = 0;
-        try { const [cnt] = await poolButton.query('SELECT SUM(qty) AS c FROM style_proses_mesin WHERE id_proses = ?', [p.id_proses]); qty = (Array.isArray(cnt) && cnt[0] && (cnt[0].c || cnt[0].C)) ? Number(cnt[0].c || cnt[0].C) : 0; } catch {}
-        procDetails.push({ name: p.nama_proses || '', machines: qty });
+      if (styleId != null) {
+        try {
+          const [sp] = await poolButton.query('SELECT id_proses, nama_proses FROM style_proses WHERE id_style = ? ORDER BY id_proses ASC', [styleId]);
+          for (const p of (Array.isArray(sp) ? sp : [])) {
+            let qty = 0;
+            try { const [cnt2] = await poolButton.query('SELECT SUM(qty) AS c FROM proses_mesin WHERE id_proses = ?', [p.id_proses]); qty = (Array.isArray(cnt2) && cnt2[0] && (cnt2[0].c || cnt2[0].C)) ? Number(cnt2[0].c || cnt2[0].C) : 0; } catch {}
+            procDetails.push({ name: p.nama_proses || '', machines: qty });
+          }
+        } catch {}
       }
-      const totalMachines = procDetails.reduce((s, x) => s + (x.machines || 0), 0);
-      out.push({ line: L.nama_line, category: '', type: styleName, totalProcesses: procDetails.length, totalMachines, processes: procDetails });
+      out.push({ line: r.line, category: r.category || '', type: r.type || '', totalProcesses: Number(r.total_processes || 0), totalMachines: Number(r.total_machines || 0), processes: procDetails });
     }
     return out;
   } catch {}

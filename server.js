@@ -221,6 +221,21 @@ app.get('/api/debug/columns', async (req, res) => {
   }
 });
 
+app.get('/api/debug/table-exists/:name', async (req, res) => {
+  try {
+    await db.ensureButtonSchema();
+    const pool = db.getButtonPool();
+    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
+    const name = String(req.params.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'table_name_wajib' });
+    const [rows] = await pool.query('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [dbname, name]);
+    const c = (rows && rows[0] && (rows[0].c || rows[0].C)) || 0;
+    res.json({ table: name, exists: c > 0 });
+  } catch (e) {
+    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
+  }
+});
+
 app.get('/api/debug/getuser/:username', async (req, res) => {
   try {
     const u = await auth.getUserByUsernameAsync(String(req.params.username || '').trim());
@@ -390,6 +405,13 @@ app.delete('/api/master/merk/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/master/proses_produksi', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const rows = await db.getProsesProduksi();
+  res.json({ data: rows });
+});
+
 // Master Line (line_db)
 app.get('/api/master/line', async (req, res) => {
   const user = await getAuthUser(req, res);
@@ -460,6 +482,17 @@ app.post('/api/process/machines', async (req, res) => {
   await db.addProcessMachines({ line, processName, machineType, qty });
   await emitState();
   res.json({ ok: true });
+});
+
+app.delete('/api/process/machines', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const { line, processName, machineType } = req.body || {};
+  if (!line || !processName || !machineType) return res.status(400).json({ error: 'line_process_machine_wajib' });
+  if (!canEditLine(user, line)) return res.status(403).json({ error: 'forbidden' });
+  const result = await db.deleteProcessMachines({ line, processName, machineType });
+  await emitState();
+  res.json(result);
 });
 
 // Master Order summary

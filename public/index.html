@@ -33,7 +33,7 @@
         <a href="#" class="nav-link px-3 py-2" data-nav="master-style"><i class="bi bi-tag me-2"></i>Master Style</a>
         <a href="#" class="nav-link px-3 py-2" data-nav="master-proses"><i class="bi bi-list-check me-2"></i>Master Proses</a>
         <a href="#" class="nav-link px-3 py-2" data-nav="master-order"><i class="bi bi-receipt me-2"></i>Master Order</a>
-        <a href="#" class="nav-link px-3 py-2" data-nav="master-button"><i class="bi bi-ui-checks-grid me-2"></i>Master Button</a>
+        <a href="#" class="nav-link px-3 py-2" data-nav="master-button"><i class="bi bi-ui-checks-grid me-2"></i>Master Counter</a>
         <a href="#" class="nav-link px-3 py-2" id="logoutLink"><i class="bi bi-box-arrow-right me-2"></i>Logout</a>
       </nav>
     </aside>
@@ -80,6 +80,51 @@
               </div>
               <div class="card-body" style="height: 420px">
                 <canvas id="chart"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="masterCounterSection" class="d-none">
+        <div class="row g-3">
+          <div class="col-12">
+            <nav aria-label="breadcrumb" class="px-1 d-none">
+              <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="#" data-nav="dashboard">Dashboard</a></li>
+                <li class="breadcrumb-item">Master Counter</li>
+                <li class="breadcrumb-item active" id="mcCrumb">Transmitter</li>
+              </ol>
+            </nav>
+          </div>
+          <div class="col-12">
+            <div class="card shadow-sm">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="fw-semibold">Master Counter</div>
+                <div class="segmented-toggle" id="mcTabs">
+                  <button class="toggle-btn active" data-mc-tab="transmitter">Transmitter</button>
+                  <button class="toggle-btn" data-mc-tab="receiver">Receiver</button>
+                  <button class="toggle-btn" data-mc-tab="task">Task</button>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3" id="mcToolbar">
+                  <input type="text" class="form-control" id="mcSearch" placeholder="Cari..." style="max-width: 280px;" />
+                  <button class="btn btn-accent d-none" id="mcAddBtn">Tambah</button>
+                </div>
+                <div id="mcTaskPanel" class="d-none">
+                  <div class="d-flex align-items-center gap-2 mb-3">
+                    <label for="mcTaskLineSelect" class="form-label mb-0">Pilih Line</label>
+                    <select id="mcTaskLineSelect" class="form-select" style="min-width: 240px"></select>
+                  </div>
+                  <div id="mcTaskGrid" class="machine-grid"></div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-striped table-hover text-center" id="mcTable">
+                    <thead id="mcThead"></thead>
+                    <tbody id="mcTbody"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -251,7 +296,7 @@
                 <div class="card p-3 mt-3">
                   <div class="fw-semibold mb-2">2. Tambahkan Proses Produksi</div>
                   <div class="d-flex gap-2 mb-3">
-                    <input type="text" id="mpProcessName" class="form-control" placeholder="Nama proses (mis. Jahit Lengan, Obras)" />
+                    <select id="mpProcessSelect" class="form-select" style="min-width: 240px"><option value="">Pilih proses</option></select>
                     <button id="mpAddProcess" class="btn btn-accent">Tambah Proses</button>
                   </div>
                   <div id="mpProcessList" class="vstack gap-2"></div>
@@ -303,14 +348,13 @@
         <div class="modal-sheet">
           <div class="modal-header d-flex justify-content-between align-items-center">
             <div id="mlModalTitle" class="fw-semibold">Form</div>
-            <button type="button" class="btn btn-link p-0 text-danger" id="mlModalClose" aria-label="Tutup"><i class="bi bi-x-lg fs-5"></i></button>
           </div>
           <div class="modal-body">
             <form id="mlForm" class="vstack gap-3"></form>
           </div>
           <div class="modal-footer d-flex justify-content-end gap-2">
-            <button type="button" class="btn btn-link text-danger" id="mlModalCancel">Batal</button>
-            <button type="button" class="btn btn-link text-success" id="mlModalSave">Simpan</button>
+            <button type="button" class="btn btn-outline-danger" id="mlModalCancel">Batal</button>
+            <button type="button" class="btn btn-outline-success" id="mlModalSave">Simpan</button>
           </div>
         </div>
       </div>
@@ -319,14 +363,13 @@
         <div class="modal-sheet">
           <div class="modal-header d-flex justify-content-between align-items-center">
             <div id="mmModalTitle" class="fw-semibold">Form</div>
-            <button type="button" class="btn btn-link p-0 text-danger" id="mmModalClose" aria-label="Tutup"><i class="bi bi-x-lg fs-5"></i></button>
           </div>
           <div class="modal-body">
             <form id="mmForm" class="vstack gap-3"></form>
           </div>
           <div class="modal-footer d-flex justify-content-end gap-2">
-            <button type="button" class="btn btn-link text-danger" id="mmModalCancel">Batal</button>
-            <button type="button" class="btn btn-link text-success" id="mmModalSave">Simpan</button>
+            <button type="button" class="btn btn-outline-danger" id="mmModalCancel">Batal</button>
+            <button type="button" class="btn btn-outline-success" id="mmModalSave">Simpan</button>
           </div>
         </div>
       </div>

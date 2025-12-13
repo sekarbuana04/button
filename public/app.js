@@ -57,6 +57,29 @@ function buildGrid(machines) {
   });
 }
 
+function buildGridFor(targetId, machines) {
+  const grid = document.getElementById(targetId);
+  if (!grid) return;
+  grid.innerHTML = '';
+  machines.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'machine-card';
+    card.dataset.machine = m.machine;
+    card.innerHTML = `
+      <div class="machine-header">
+        <div class="machine-title">${m.machine}</div>
+        <div class="status-dot status-${m.status}"></div>
+      </div>
+      <div class="machine-job">${m.job}</div>
+      <div class="counts">
+        <div class="count-box"><div class="count-title">GOOD</div><div class="count-good" data-type="good">${m.good}</div></div>
+        <div class="count-box"><div class="count-title">REJECT</div><div class="count-reject" data-type="reject">${m.reject}</div></div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
 function updateGrid(machines) {
   const grid = document.getElementById('grid');
   machines.forEach(m => {
@@ -134,9 +157,10 @@ function renderSelected() {
   panelTitle.textContent = `Status Mesin – ${currentLine}`;
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
-  const styleName = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
+  const styleFromMeta = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
   const notice = document.getElementById('noOrderNotice');
-  const hasOrder = !!styleName && machines.length > 0;
+  const hasOrder = !!styleFromMeta && machines.length > 0;
+  const styleName = hasOrder ? styleFromMeta : null;
   if (notice) notice.classList.toggle('d-none', hasOrder);
   buildGrid(machines);
   ensureChart(machines);
@@ -174,7 +198,10 @@ socket.on('updateData', (payload) => {
     currentLine = allowed[0];
     select.value = currentLine;
   }
-  const styleName = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
+  const machines = Array.isArray(latestState.lines[currentLine]) ? latestState.lines[currentLine] : [];
+  const styleFromMeta = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
+  const hasOrder = !!styleFromMeta && machines.length > 0;
+  const styleName = hasOrder ? styleFromMeta : null;
   const badge = document.getElementById('lineStyleBadge');
   const toClass = (s) => s ? s.toLowerCase() : '';
   const mapClass = (s) => s === 'kemeja' ? 'style-kemeja' : s === 'celana' ? 'style-celana' : s === 'rok' ? 'style-rok' : s === 'sweater' ? 'style-sweater' : '';
@@ -191,7 +218,10 @@ lineSelect.addEventListener('change', () => {
   currentLine = lineSelect.value;
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
-  const styleName = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
+  const machines = Array.isArray(latestState.lines[currentLine]) ? latestState.lines[currentLine] : [];
+  const styleFromMeta = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
+  const hasOrder = !!styleFromMeta && machines.length > 0;
+  const styleName = hasOrder ? styleFromMeta : null;
   const badge = document.getElementById('lineStyleBadge');
   const toClass = (s) => s ? s.toLowerCase() : '';
   const mapClass = (s) => s === 'kemeja' ? 'style-kemeja' : s === 'celana' ? 'style-celana' : s === 'rok' ? 'style-rok' : s === 'sweater' ? 'style-sweater' : '';
@@ -263,7 +293,7 @@ document.addEventListener('click', (e) => {
   if (v === 'dashboard') { setView('task'); restoreDashboard(); setRouteIndicator('dashboard'); try { sessionStorage.setItem('route', 'dashboard'); } catch {} }
   if (v === 'master-mesin') { showMasterMesin(); setRouteIndicator('master-mesin'); try { sessionStorage.setItem('route', 'master-mesin'); } catch {} }
   if (v === 'master-order') { showMasterOrder(); setRouteIndicator('master-order'); try { sessionStorage.setItem('route', 'master-order'); } catch {} }
-  if (v === 'master-button') { showMasterMesin(); setRouteIndicator('master-button'); try { sessionStorage.setItem('route', 'master-button'); } catch {} }
+  if (v === 'master-button') { showMasterCounter(); setRouteIndicator('master-button'); try { sessionStorage.setItem('route', 'master-button'); } catch {} }
   if (v === 'master-line') { showMasterLine(); setRouteIndicator('master-line'); try { sessionStorage.setItem('route', 'master-line'); } catch {} }
   if (v === 'master-style') { showMasterStyle(); setRouteIndicator('master-style'); try { sessionStorage.setItem('route', 'master-style'); } catch {} }
   if (v === 'master-proses') { showMasterProses(); setRouteIndicator('master-proses'); try { sessionStorage.setItem('route', 'master-proses'); } catch {} }
@@ -310,14 +340,15 @@ function enforceRoleUI() {
     applySidebar();
     try {
       const route = sessionStorage.getItem('route');
-      const tab = sessionStorage.getItem('mmTab');
+      const mmStored = sessionStorage.getItem('mmTab');
+      const mcStored = sessionStorage.getItem('mcTab');
       if (route === 'master-mesin') {
         showMasterMesin();
-        setMmTab(tab || 'kategori');
+        setMmTab(mmStored || 'kategori');
         setRouteIndicator('master-mesin');
       } else if (route === 'master-button') {
-        showMasterMesin();
-        setMmTab(tab || 'kategori');
+        showMasterCounter();
+        setMcTab(mcStored || 'transmitter');
         setRouteIndicator('master-button');
       } else if (route === 'master-order') {
         showMasterOrder();
@@ -359,6 +390,9 @@ let mmRows = [];
 let mmJenisIndex = [];
 let mmModalAction = null;
 let mmModalEditId = null;
+
+let mcTab = 'transmitter';
+let mcRows = [];
 
 let mlRows = [];
 let mlModalAction = null;
@@ -465,7 +499,7 @@ function showMasterProses() {
   const mpOrderType = document.getElementById('mpOrderType');
   const mpOrderProcCount = document.getElementById('mpOrderProcCount');
   const mpProcessSections = document.getElementById('mpProcessSections');
-  const mpProcessName = document.getElementById('mpProcessName');
+  const mpProcessSelect = document.getElementById('mpProcessSelect');
   const mpAddProcess = document.getElementById('mpAddProcess');
   const mpProcessList = document.getElementById('mpProcessList');
   const mpSaveProcs = document.getElementById('mpSaveProcs');
@@ -488,6 +522,17 @@ function showMasterProses() {
       const data = await res.json();
       const rows = Array.isArray(data.data) ? data.data : [];
       if (mpLineSelect) mpLineSelect.innerHTML = '<option value="">Pilih line</option>' + rows.map(r => `<option value="${r.nama_line}">${r.nama_line}</option>`).join('');
+    } catch {}
+  }
+
+  async function mpLoadProsesProduksi() {
+    try {
+      const res = await fetch('/api/master/proses_produksi', { headers: authHeaders() });
+      const data = await res.json();
+      const rows = Array.isArray(data && data.data) ? data.data : [];
+      if (mpProcessSelect) {
+        mpProcessSelect.innerHTML = '<option value="">Pilih proses</option>' + rows.map(r => `<option value="${r.nama}">${r.nama}</option>`).join('');
+      }
     } catch {}
   }
 
@@ -519,16 +564,36 @@ function showMasterProses() {
     } catch {}
   }
 
+  async function renderMpSectionsLocal(line) {
+    if (!line) { mpProcessSections.innerHTML = ''; return; }
+    try {
+      const machinesRes = await fetch(`/api/lines/${encodeURIComponent(line)}`, { headers: authHeaders() });
+      const machData = await machinesRes.json();
+      const machines = Array.isArray(machData && machData.data) ? machData.data : [];
+      const opts = jenisList.map(n => `<option value="${n}">${n}</option>`).join('');
+      mpProcessSections.innerHTML = mpProcs.map((p, idx) => {
+        const tableId = `mpMachineTable-${idx}`;
+        const selId = `mpJenis-${idx}`;
+        const qtyId = `mpQty-${idx}`;
+        const addId = `mpAdd-${idx}`;
+        const rows = machines.filter(m => String(m.job) === String(p.name)).map((m, j) => `<tr data-idx="${j}"><td>${m.machine}</td><td>${m.status}</td></tr>`).join('');
+        return `<div class="border rounded p-3"><div class="d-flex justify-content-between align-items-center mb-2"><div class="fw-semibold">${p.name}</div><i class="bi bi-cpu"></i></div><div class="row g-2 align-items-end"><div class="col-md-6"><label class="form-label">Jenis Mesin</label><select id="${selId}" class="form-select"><option value="">Pilih jenis mesin</option>${opts}</select></div><div class="col-md-3"><label class="form-label">Jumlah Mesin</label><input type="number" id="${qtyId}" class="form-control" min="1" value="1" /></div><div class="col-md-3"><button id="${addId}" class="btn btn-accent w-100">Tambah Mesin</button></div></div><div class="table-responsive mt-3"><table class="table table-sm table-striped text-center"><thead><tr><th>Mesin</th><th>Status</th></tr></thead><tbody id="${tableId}">${rows || ''}</tbody></table></div></div>`;
+      }).join('');
+    } catch { mpProcessSections.innerHTML = ''; }
+  }
+
   function renderMpProcessList() {
     if (!mpProcessList) return;
     mpProcessList.innerHTML = mpProcs.map((p, idx) => {
       return `<div class="card p-2" data-mp-proc="${idx}"><div class="d-flex justify-content-between align-items-center"><div class="fw-semibold">${p.name}</div><div class="d-flex gap-2"><button class="btn btn-link p-0 text-warning" data-mp-act="edit"><i class="bi bi-pencil-square fs-5"></i></button><button class="btn btn-link p-0 text-danger" data-mp-act="delete"><i class="bi bi-trash fs-5"></i></button></div></div></div>`;
     }).join('');
     mpOrderProcCount.textContent = String(mpProcs.length);
+    const line = mpLineSelect && mpLineSelect.value ? mpLineSelect.value : '';
+    renderMpSectionsLocal(line);
   }
 
   if (mpLineSelect) mpLineSelect.addEventListener('change', () => { const v = mpLineSelect.value; mpRefresh(v); });
-  if (mpAddProcess) mpAddProcess.addEventListener('click', () => { const name = mpProcessName && mpProcessName.value ? mpProcessName.value.trim() : ''; if (!name) return; mpProcs.push({ name }); mpProcessName.value = ''; renderMpProcessList(); });
+  if (mpAddProcess) mpAddProcess.addEventListener('click', () => { const name = mpProcessSelect && mpProcessSelect.value ? mpProcessSelect.value.trim() : ''; if (!name) return; mpProcs.push({ name }); if (mpProcessSelect) mpProcessSelect.value = ''; renderMpProcessList(); });
   if (mpSaveProcs) mpSaveProcs.addEventListener('click', async () => {
     const line = mpLineSelect && mpLineSelect.value ? mpLineSelect.value : '';
     if (!line) { alert('Pilih line terlebih dahulu.'); return; }
@@ -546,10 +611,10 @@ function showMasterProses() {
       const pidx = card ? parseInt(card.getAttribute('data-mp-proc'), 10) : -1;
       if (pidx < 0) return;
       const act = actBtn.getAttribute('data-mp-act');
-      if (act === 'delete') { mpProcs.splice(pidx, 1); renderMpProcessList(); mpRefresh(mpLineSelect.value); }
+      if (act === 'delete') { mpProcs.splice(pidx, 1); renderMpProcessList(); }
       if (act === 'edit') {
         const name = prompt('Edit nama proses', mpProcs[pidx].name || '');
-        if (name) { mpProcs[pidx].name = name.trim(); renderMpProcessList(); mpRefresh(mpLineSelect.value); }
+        if (name) { mpProcs[pidx].name = name.trim(); renderMpProcessList(); }
       }
       return;
     }
@@ -571,7 +636,7 @@ function showMasterProses() {
     } catch { alert('Gagal menambahkan mesin'); }
   });
 
-  mpLoadJenis().then(() => { mpLoadLines(); });
+  mpLoadJenis().then(() => { mpLoadLines(); mpLoadProsesProduksi(); });
 }
 
 function hideMasterProses() {
@@ -584,7 +649,7 @@ function showSectionOnly(id) {
   const controlsBar = document.querySelector('.controls-bar');
   if (linePanel) linePanel.classList.add('d-none');
   if (controlsBar) controlsBar.classList.add('d-none');
-  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection'].forEach(s => {
+  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection','masterCounterSection'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.add('d-none');
   });
@@ -597,7 +662,7 @@ function restoreDashboard() {
   const controlsBar = document.querySelector('.controls-bar');
   if (linePanel) linePanel.classList.remove('d-none');
   if (controlsBar) controlsBar.classList.remove('d-none');
-  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection'].forEach(s => {
+  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection','masterCounterSection'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.add('d-none');
   });
@@ -640,6 +705,88 @@ function setMmTab(tab) {
   if (addBtn) addBtn.classList.toggle('d-none', currentUser && currentUser.role === 'line_admin');
   try { sessionStorage.setItem('mmTab', mmTab); } catch {}
   fetchMmData();
+}
+
+function showMasterCounter() {
+  showSectionOnly('masterCounterSection');
+  setMcTab('transmitter');
+}
+
+function setMcTab(tab) {
+  mcTab = tab;
+  const tabs = document.querySelectorAll('[data-mc-tab]');
+  tabs.forEach(el => el.classList.toggle('active', el.getAttribute('data-mc-tab') === tab));
+  const crumb = document.getElementById('mcCrumb');
+  if (crumb) {
+    crumb.textContent = tab === 'transmitter' ? 'Transmitter' : (tab === 'receiver' ? 'Receiver' : 'Task');
+  }
+  const addBtn = document.getElementById('mcAddBtn');
+  if (addBtn) addBtn.classList.toggle('d-none', true);
+  try { sessionStorage.setItem('mcTab', mcTab); } catch {}
+  fetchMcData();
+}
+
+function fetchMcData() {
+  const thead = document.getElementById('mcThead');
+  const tbody = document.getElementById('mcTbody');
+  const panel = document.getElementById('mcTaskPanel');
+  const toolbar = document.getElementById('mcToolbar');
+  if (toolbar) toolbar.classList.toggle('d-none', mcTab === 'task');
+  const search = document.getElementById('mcSearch');
+  if (search) search.classList.toggle('d-none', mcTab === 'task');
+  if (mcTab === 'task') {
+    if (panel) panel.classList.remove('d-none');
+    if (thead) thead.innerHTML = '';
+    if (tbody) tbody.innerHTML = '';
+    populateMcTaskLines();
+    return;
+  }
+  if (panel) panel.classList.add('d-none');
+  if (thead && tbody) {
+    thead.innerHTML = '<tr><th>ID</th><th>Nama</th><th style="width:120px">Aksi</th></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Belum ada data</td></tr>';
+  }
+}
+
+const mcTabs = document.getElementById('mcTabs');
+if (mcTabs) {
+  mcTabs.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-mc-tab]');
+    if (!t) return;
+    setMcTab(t.getAttribute('data-mc-tab'));
+  });
+}
+
+async function populateMcTaskLines() {
+  try {
+    const sel = document.getElementById('mcTaskLineSelect');
+    if (!sel) return;
+    if (sel.options.length === 0) {
+      const res = await fetch('/api/master/line', { headers: authHeaders() });
+      const data = await res.json();
+      const rows = Array.isArray(data.data) ? data.data : [];
+      sel.innerHTML = rows.map(r => `<option value="${r.nama_line}">${r.nama_line}</option>`).join('');
+    }
+    const v = sel.value || (sel.options[0] ? sel.options[0].value : '');
+    if (v) renderMcTask(v);
+  } catch {}
+}
+
+async function renderMcTask(line) {
+  try {
+    const res = await fetch(`/api/lines/${encodeURIComponent(line)}`, { headers: authHeaders() });
+    const data = await res.json();
+    const machines = sortMachines(Array.isArray(data && data.data) ? data.data : []);
+    buildGridFor('mcTaskGrid', machines);
+  } catch {}
+}
+
+const mcTaskSel = document.getElementById('mcTaskLineSelect');
+if (mcTaskSel) {
+  mcTaskSel.addEventListener('change', () => {
+    const v = mcTaskSel.value;
+    if (v) renderMcTask(v);
+  });
 }
 
 async function fetchMmData() {
