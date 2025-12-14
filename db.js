@@ -34,7 +34,7 @@ function tasksForStyle(style) {
   return out;
 }
 
-let state = { lines: {}, list: [], meta: {} };
+let state = { lines: {}, list: [], meta: {}, transmitters: [], machineTx: {} };
 const DB_MYSQL = (process.env.DB_MYSQL || 'true').toLowerCase() === 'true';
 let pool = null;
 let poolButton = null;
@@ -259,6 +259,25 @@ async function ensureButtonMasterSchema() {
     if (existsKategori) await dropTableWithFk(poolConn, 'kategori');
     const existsSpm = await tableExists(poolConn, 'style_proses_mesin');
     if (existsSpm) await dropTableWithFk(poolConn, 'style_proses_mesin');
+  } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS transmitters (\n' +
+      '  id_tx INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  name VARCHAR(128),\n' +
+      '  device_id VARCHAR(128),\n' +
+      '  status VARCHAR(32)\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
+  try {
+    await poolButton.execute(
+      'CREATE TABLE IF NOT EXISTS machine_tx (\n' +
+      '  machine_id VARCHAR(128) PRIMARY KEY,\n' +
+      '  tx_id INT NULL,\n' +
+      '  CONSTRAINT fk_tx FOREIGN KEY (tx_id) REFERENCES transmitters(id_tx)\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
   } catch {}
 }
 
@@ -747,6 +766,8 @@ module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLi
   saveStyleOrder, getStyleOrderByLine, addStyleProcess, deleteStyleProcess, renameStyleProcess, addProcessMachines, getMasterOrderSummary,
   deleteProcessMachines, deleteMasterOrderForLine,
   migrateLegacyTables,
+  getTransmitters, createTransmitter, updateTransmitter, deleteTransmitter,
+  getMachineTx, setMachineTransmitter, getMachineTxMapForLine,
   isButtonDbReady };
 async function ensurePrimarySchema() {
   await initMySQL();
@@ -1207,4 +1228,105 @@ async function getMasterOrderSummary() {
     out.push({ line, category: '', type: style, totalProcesses: 0, totalMachines: arr.length, processes: [] });
   }
   return out;
+}
+
+async function getTransmitters() {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) {
+    return Array.isArray(state.transmitters) ? state.transmitters.slice() : [];
+  }
+  try {
+    const [rows] = await poolButton.query('SELECT id_tx, name, device_id, status FROM transmitters ORDER BY id_tx ASC');
+    return rows.map(r => ({ id_tx: r.id_tx, name: r.name, device_id: r.device_id, status: r.status || 'idle' }));
+  } catch { return Array.isArray(state.transmitters) ? state.transmitters.slice() : []; }
+}
+
+async function createTransmitter({ name, device_id, status }) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) {
+    const cur = Array.isArray(state.transmitters) ? state.transmitters : [];
+    const nextId = cur.length ? Math.max(...cur.map(t => Number(t.id_tx) || 0)) + 1 : 1;
+    const row = { id_tx: nextId, name: name || null, device_id: device_id || null, status: status || null };
+    state.transmitters = cur.concat(row);
+    save();
+    return row;
+  }
+  const [res] = await poolButton.execute('INSERT INTO transmitters (name, device_id, status) VALUES (?,?,?)', [name || null, device_id || null, status || null]);
+  return { id_tx: res.insertId, name, device_id, status };
+}
+
+async function updateTransmitter(id, { name, device_id, status }) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) {
+    const cur = Array.isArray(state.transmitters) ? state.transmitters.slice() : [];
+    const idx = cur.findIndex(t => String(t.id_tx) === String(id));
+    if (idx >= 0) {
+      const prev = cur[idx];
+      cur[idx] = { ...prev, name: name ?? prev.name, device_id: device_id ?? prev.device_id, status: status ?? prev.status };
+      state.transmitters = cur;
+      save();
+    }
+    return { ok: true };
+  }
+  await poolButton.execute('UPDATE transmitters SET name = COALESCE(?, name), device_id = COALESCE(?, device_id), status = COALESCE(?, status) WHERE id_tx = ?', [name || null, device_id || null, status || null, id]);
+  return { ok: true };
+}
+
+async function deleteTransmitter(id) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) {
+    const cur = Array.isArray(state.transmitters) ? state.transmitters.slice() : [];
+    state.transmitters = cur.filter(t => String(t.id_tx) !== String(id));
+    // also clear any machineTx mapping referencing this transmitter
+    const map = { ...(state.machineTx || {}) };
+    for (const k of Object.keys(map)) { if (String(map[k]) === String(id)) delete map[k]; }
+    state.machineTx = map;
+    save();
+    return { ok: true };
+  }
+  await poolButton.execute('DELETE FROM transmitters WHERE id_tx = ?', [id]);
+  return { ok: true };
+}
+
+async function getMachineTx(machineId) {
+  await ensureButtonMasterSchema();
+  const [rows] = await poolButton.query('SELECT tx_id FROM machine_tx WHERE machine_id = ? LIMIT 1', [String(machineId)]);
+  return (Array.isArray(rows) && rows[0]) ? (rows[0].tx_id || null) : null;
+}
+
+async function setMachineTransmitter(machineId, txId) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) {
+    const map = { ...(state.machineTx || {}) };
+    if (txId == null) {
+      delete map[String(machineId)];
+    } else {
+      map[String(machineId)] = txId;
+    }
+    state.machineTx = map;
+    save();
+    return { ok: true };
+  }
+  await poolButton.execute('INSERT INTO machine_tx (machine_id, tx_id) VALUES (?, ?) ON DUPLICATE KEY UPDATE tx_id = VALUES(tx_id)', [String(machineId), txId || null]);
+  return { ok: true };
+}
+
+async function getMachineTxMapForLine(line) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) {
+    const prefix = `${String(line)}-`;
+    const map = {};
+    const cur = state.machineTx || {};
+    for (const k of Object.keys(cur)) {
+      if (k.startsWith(prefix)) map[k] = cur[k] || null;
+    }
+    return map;
+  }
+  const prefix = `${String(line)}-`;
+  try {
+    const [rows] = await poolButton.query('SELECT machine_id, tx_id FROM machine_tx WHERE machine_id LIKE ?', [`${prefix}%`]);
+    const map = {};
+    for (const r of Array.isArray(rows) ? rows : []) { map[r.machine_id] = r.tx_id || null; }
+    return map;
+  } catch { return {}; }
 }

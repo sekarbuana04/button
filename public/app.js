@@ -914,7 +914,11 @@ async function renderMcTask(line) {
     const res = await fetch(`/api/lines/${encodeURIComponent(line)}`, { headers: authHeaders() });
     const data = await res.json();
     const machines = sortMachines(Array.isArray(data && data.data) ? data.data : []);
-    buildGridFor('mcTaskGrid', machines);
+    const txRes = await fetch(`/api/lines/${encodeURIComponent(line)}/transmitters`, { headers: authHeaders() });
+    const txData = await txRes.json();
+    const txList = Array.isArray(txData && txData.transmitters) ? txData.transmitters : [];
+    const txMap = (txData && txData.map) ? txData.map : {};
+    buildMcTaskGrid(machines, txList, txMap);
   } catch {}
 }
 
@@ -923,6 +927,58 @@ if (mcTaskSel) {
   mcTaskSel.addEventListener('change', () => {
     const v = mcTaskSel.value;
     if (v) renderMcTask(v);
+  });
+}
+
+function buildMcTaskGrid(machines, txList, txMap) {
+  const grid = document.getElementById('mcTaskGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const inUse = new Set(Object.values(txMap || {}).filter(v => v != null).map(v => Number(v)));
+  machines.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'machine-card';
+    card.dataset.machine = m.machine;
+    const opts = ['<option value=\"\">Pilih transmitter</option>'].concat(txList.map(t => {
+      const sel = txMap && txMap[m.machine] == t.id_tx;
+      const dis = inUse.has(Number(t.id_tx)) && !sel ? 'disabled' : '';
+      return `<option value=\"${t.id_tx}\" ${sel ? 'selected' : ''} ${dis}>${t.name}</option>`;
+    })).join('');
+    card.innerHTML = `
+      <div class=\"machine-header\">
+        <div class=\"machine-title\">${m.machine}</div>
+        <div class=\"status-dot status-${m.status}\"></div>
+      </div>
+      <div class=\"machine-job\">${m.job}</div>
+      <div class=\"counts\">
+        <div class=\"count-box\"><div class=\"count-title\">GOOD</div><div class=\"count-good\" data-type=\"good\">${m.good}</div></div>
+        <div class=\"count-box\"><div class=\"count-title\">REJECT</div><div class=\"count-reject\" data-type=\"reject\">${m.reject}</div></div>
+      </div>
+      <div class=\"mt-2\">
+        <select class=\"form-select form-select-sm tx-select\">${opts}</select>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+  grid.querySelectorAll('.tx-select').forEach(sel => {
+    sel.addEventListener('change', async (e) => {
+      const card = e.target.closest('.machine-card');
+      const machine = card ? card.dataset.machine : '';
+      const lineSel = document.getElementById('mcTaskLineSelect');
+      const line = lineSel && lineSel.value ? lineSel.value : '';
+      const txidVal = e.target.value;
+      const tx_id = txidVal ? parseInt(txidVal, 10) : null;
+      if (!line || !machine) return;
+      try {
+        const res = await fetch(`/api/lines/${encodeURIComponent(line)}/machines/${encodeURIComponent(machine)}/transmitter`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ tx_id }) });
+        if (res && res.status === 409) {
+          const data = await res.json().catch(() => ({}));
+        }
+      } catch {}
+      try {
+        await renderMcTask(line);
+      } catch {}
+    });
   });
 }
 

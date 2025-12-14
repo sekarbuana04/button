@@ -371,6 +371,71 @@ app.delete('/api/master/merk/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/master/transmitters', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const rows = await db.getTransmitters();
+  res.json({ data: rows });
+});
+
+app.post('/api/master/transmitters', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { name, device_id, status } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name_wajib' });
+  const row = await db.createTransmitter({ name, device_id, status });
+  res.json({ ok: true, data: row });
+});
+
+app.put('/api/master/transmitters/:id', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { name, device_id, status } = req.body || {};
+  await db.updateTransmitter(req.params.id, { name, device_id, status });
+  res.json({ ok: true });
+});
+
+app.delete('/api/master/transmitters/:id', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  await db.deleteTransmitter(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/lines/:line/transmitters', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const line = req.params.line;
+  if (!canEditLine(user, line) && user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const map = await db.getMachineTxMapForLine(line);
+  const list = await db.getTransmitters();
+  res.json({ line, map, transmitters: list });
+});
+
+app.post('/api/lines/:line/machines/:machine/transmitter', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const line = req.params.line;
+  const machine = req.params.machine;
+  if (!line || !machine) return res.status(400).json({ error: 'line_machine_wajib' });
+  if (!canEditLine(user, line) && user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { tx_id } = req.body || {};
+  if (tx_id != null) {
+    const map = await db.getMachineTxMapForLine(line);
+    for (const k of Object.keys(map)) {
+      const v = map[k];
+      if (k !== machine && v != null && Number(v) === Number(tx_id)) {
+        return res.status(409).json({ error: 'tx_in_use', machine: k });
+      }
+    }
+  }
+  await db.setMachineTransmitter(machine, tx_id || null);
+  res.json({ ok: true });
+});
+
 app.get('/api/master/proses_produksi', async (req, res) => {
   const user = await getAuthUser(req, res);
   if (!user) return;

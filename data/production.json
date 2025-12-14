@@ -5,55 +5,55 @@
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-1",
         "job": "Jahit Saku Belakang",
-        "good": 0,
-        "reject": 0,
+        "good": 466,
+        "reject": 58,
         "status": "active",
-        "updatedAt": "2025-12-13T17:12:38.229Z"
+        "updatedAt": "2025-12-14T15:03:26.890Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-2",
         "job": "Jahit Saku Belakang",
-        "good": 0,
-        "reject": 0,
+        "good": 403,
+        "reject": 36,
         "status": "active",
-        "updatedAt": "2025-12-13T17:12:38.230Z"
+        "updatedAt": "2025-12-14T15:03:18.815Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-1",
         "job": "Jahit Saku Kangaroo",
-        "good": 0,
-        "reject": 0,
+        "good": 436,
+        "reject": 56,
         "status": "active",
-        "updatedAt": "2025-12-13T17:15:08.295Z"
+        "updatedAt": "2025-12-14T15:03:23.932Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-2",
         "job": "Jahit Saku Kangaroo",
-        "good": 0,
-        "reject": 0,
+        "good": 403,
+        "reject": 52,
         "status": "active",
-        "updatedAt": "2025-12-13T17:15:08.296Z"
+        "updatedAt": "2025-12-14T15:03:12.780Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-1",
         "job": "Jahit Saku Patch",
-        "good": 0,
-        "reject": 0,
+        "good": 423,
+        "reject": 44,
         "status": "active",
-        "updatedAt": "2025-12-13T17:15:44.690Z"
+        "updatedAt": "2025-12-14T15:03:20.844Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-2",
         "job": "Jahit Saku Patch",
-        "good": 0,
-        "reject": 0,
+        "good": 473,
+        "reject": 52,
         "status": "active",
-        "updatedAt": "2025-12-13T17:15:44.692Z"
+        "updatedAt": "2025-12-14T15:03:05.719Z"
       }
     ],
     "LINE 10B": [],
@@ -93,7 +93,28 @@
     "Pantai Kuta": [],
     "Pantai Nihiwatu": [],
     "Pantai Parangtritis": [],
-    "Danau Sentani": []
+    "Danau Sentani": [],
+    "Line 1": [
+      {
+        "line": "Line 1",
+        "machine": "Line 1-Proc-01-1",
+        "job": "Job A",
+        "good": 845,
+        "reject": 100,
+        "status": "active",
+        "updatedAt": "2025-12-14T15:03:26.891Z"
+      },
+      {
+        "line": "Line 1",
+        "machine": "Line 1-Proc-01-2",
+        "job": "Job B",
+        "good": 997,
+        "reject": 103,
+        "status": "active",
+        "updatedAt": "2025-12-14T15:03:25.873Z"
+      }
+    ],
+    "Line 2": []
   },
   "list": [
     "LINE 10A",
@@ -134,7 +155,11 @@
     "Pantai Kuta",
     "Pantai Nihiwatu",
     "Pantai Parangtritis",
-    "Danau Sentani"
+    "Danau Sentani",
+    "Line 1",
+    "Line 2",
+    "Line 1",
+    "Line 2"
   ],
   "meta": {
     "LINE 10A": {
@@ -366,6 +391,18 @@
       "defaults": {}
     },
     "Danau Sentani": {
+      "style": null,
+      "status": "active",
+      "processes": [],
+      "defaults": {}
+    },
+    "Line 1": {
+      "style": null,
+      "status": "active",
+      "processes": [],
+      "defaults": {}
+    },
+    "Line 2": {
       "style": null,
       "status": "active",
       "processes": [],
