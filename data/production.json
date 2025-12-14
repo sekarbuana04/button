@@ -5,55 +5,55 @@
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-1",
         "job": "Jahit Saku Belakang",
-        "good": 466,
-        "reject": 58,
+        "good": 477,
+        "reject": 60,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:26.890Z"
+        "updatedAt": "2025-12-14T15:04:01.217Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-2",
         "job": "Jahit Saku Belakang",
-        "good": 403,
+        "good": 417,
         "reject": 36,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:18.815Z"
+        "updatedAt": "2025-12-14T15:04:02.229Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-1",
         "job": "Jahit Saku Kangaroo",
-        "good": 436,
+        "good": 442,
         "reject": 56,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:23.932Z"
+        "updatedAt": "2025-12-14T15:03:52.121Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-2",
         "job": "Jahit Saku Kangaroo",
-        "good": 403,
-        "reject": 52,
+        "good": 408,
+        "reject": 53,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:12.780Z"
+        "updatedAt": "2025-12-14T15:03:53.119Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-1",
         "job": "Jahit Saku Patch",
-        "good": 423,
+        "good": 430,
         "reject": 44,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:20.844Z"
+        "updatedAt": "2025-12-14T15:03:55.160Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-2",
         "job": "Jahit Saku Patch",
-        "good": 473,
-        "reject": 52,
+        "good": 480,
+        "reject": 54,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:05.719Z"
+        "updatedAt": "2025-12-14T15:03:54.133Z"
       }
     ],
     "LINE 10B": [],
@@ -99,19 +99,19 @@
         "line": "Line 1",
         "machine": "Line 1-Proc-01-1",
         "job": "Job A",
-        "good": 845,
-        "reject": 100,
+        "good": 902,
+        "reject": 104,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:26.891Z"
+        "updatedAt": "2025-12-14T15:04:02.229Z"
       },
       {
         "line": "Line 1",
         "machine": "Line 1-Proc-01-2",
         "job": "Job B",
-        "good": 997,
-        "reject": 103,
+        "good": 1037,
+        "reject": 108,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:25.873Z"
+        "updatedAt": "2025-12-14T15:04:02.230Z"
       }
     ],
     "Line 2": []
