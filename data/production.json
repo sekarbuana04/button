@@ -140,11 +140,7 @@
     "LINE 10A": {
       "style": "Kemeja",
       "status": "active",
-      "processes": [
-        {
-          "name": "Jahit Saku Patch"
-        }
-      ],
+      "processes": [],
       "defaults": {}
     },
     "LINE 10B": {

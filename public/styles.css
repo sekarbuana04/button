@@ -27,6 +27,9 @@ body.theme-midnight { --bg-page:#0B1220; --text:#E5E7EB; --header-bg:#0F172A; --
   height: 80px;
   background: var(--header-bg);
   color: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 1200;
 }
 .topbar .title { font-size: 1.4rem; letter-spacing: 0.5px; }
 .topbar .datetime { font-weight: 600; }
