@@ -29,6 +29,10 @@ let currentLine = null;
 let latestState = null;
 let currentView = 'task';
 let currentUser = null;
+let gridBuilt = false;
+let effectsEnabled = false;
+let lastGridSig = '';
+let lastTxFetchAt = 0;
 let sidebarOpen = true;
 try {
   const sv = sessionStorage.getItem('sb');
@@ -42,15 +46,21 @@ function buildGrid(machines) {
     const card = document.createElement('div');
     card.className = 'machine-card';
     card.dataset.machine = m.machine;
+    const cls = (String(m.status) === 'offline') ? 'status-offline' : (latestTxMap && latestTxMap[m.machine] != null ? 'status-active' : 'status-no-tx');
+    const parts = String(m.machine).split('-');
+    const machineType = parts.length >= 2 ? parts[parts.length - 2] : '';
+    const hasTx = latestTxMap && latestTxMap[m.machine] != null;
+    const goodVal = hasTx ? m.good : 0;
+    const rejectVal = hasTx ? m.reject : 0;
     card.innerHTML = `
       <div class="machine-header">
-        <div class="machine-title">${m.machine}</div>
-        <div class="status-dot status-${m.status}"></div>
+        <div class="machine-title">${m.job}</div>
+        <div class="status-dot ${cls}"></div>
       </div>
-      <div class="machine-job">${m.job}</div>
+      <div class="machine-job">${machineType}</div>
       <div class="counts">
-        <div class="count-box"><div class="count-title">GOOD</div><div class="count-good" data-type="good">${m.good}</div></div>
-        <div class="count-box"><div class="count-title">REJECT</div><div class="count-reject" data-type="reject">${m.reject}</div></div>
+        <div class="count-box"><div class="count-title">GOOD</div><div class="count-good" data-type="good">${goodVal}</div></div>
+        <div class="count-box"><div class="count-title">REJECT</div><div class="count-reject" data-type="reject">${rejectVal}</div></div>
       </div>
     `;
     grid.appendChild(card);
@@ -65,15 +75,21 @@ function buildGridFor(targetId, machines) {
     const card = document.createElement('div');
     card.className = 'machine-card';
     card.dataset.machine = m.machine;
+    const cls = (String(m.status) === 'offline') ? 'status-offline' : (latestTxMap && latestTxMap[m.machine] != null ? 'status-active' : 'status-no-tx');
+    const parts = String(m.machine).split('-');
+    const machineType = parts.length >= 2 ? parts[parts.length - 2] : '';
+    const hasTx = latestTxMap && latestTxMap[m.machine] != null;
+    const goodVal = hasTx ? m.good : 0;
+    const rejectVal = hasTx ? m.reject : 0;
     card.innerHTML = `
       <div class="machine-header">
-        <div class="machine-title">${m.machine}</div>
-        <div class="status-dot status-${m.status}"></div>
+        <div class="machine-title">${m.job}</div>
+        <div class="status-dot ${cls}"></div>
       </div>
-      <div class="machine-job">${m.job}</div>
+      <div class="machine-job">${machineType}</div>
       <div class="counts">
-        <div class="count-box"><div class="count-title">GOOD</div><div class="count-good" data-type="good">${m.good}</div></div>
-        <div class="count-box"><div class="count-title">REJECT</div><div class="count-reject" data-type="reject">${m.reject}</div></div>
+        <div class="count-box"><div class="count-title">GOOD</div><div class="count-good" data-type="good">${goodVal}</div></div>
+        <div class="count-box"><div class="count-title">REJECT</div><div class="count-reject" data-type="reject">${rejectVal}</div></div>
       </div>
     `;
     grid.appendChild(card);
@@ -86,31 +102,41 @@ function updateGrid(machines) {
     const card = grid.querySelector(`.machine-card[data-machine="${m.machine}"]`);
     if (!card) return;
     const statusDot = card.querySelector('.status-dot');
-    statusDot.className = `status-dot status-${m.status}`;
+    const cls = (String(m.status) === 'offline') ? 'status-offline' : (latestTxMap && latestTxMap[m.machine] != null ? 'status-active' : 'status-no-tx');
+    const prevHasCls = statusDot && statusDot.classList && statusDot.classList.contains(cls);
 
     const goodEl = card.querySelector('.count-good');
     const rejectEl = card.querySelector('.count-reject');
 
+    const hasTx = latestTxMap && latestTxMap[m.machine] != null;
+    const displayGood = hasTx ? m.good : 0;
+    const displayReject = hasTx ? m.reject : 0;
     const prevGood = parseInt(goodEl.textContent) || 0;
     const prevReject = parseInt(rejectEl.textContent) || 0;
-    const goodInc = m.good - prevGood;
-    const rejectInc = m.reject - prevReject;
+    const goodInc = displayGood - prevGood;
+    const rejectInc = displayReject - prevReject;
 
-    goodEl.textContent = m.good;
-    rejectEl.textContent = m.reject;
+    if (goodInc === 0 && rejectInc === 0 && prevHasCls) return;
 
-    if (goodInc > 0) card.classList.add('blink-good');
-    if (rejectInc > 0) card.classList.add('blink-reject');
-    setTimeout(() => { card.classList.remove('blink-good'); card.classList.remove('blink-reject'); }, 350);
+    statusDot.className = `status-dot ${cls}`;
+    goodEl.textContent = displayGood;
+    rejectEl.textContent = displayReject;
+
+    if (effectsEnabled && goodInc > 0) card.classList.add('blink-good');
+    if (effectsEnabled && rejectInc > 0) card.classList.add('blink-reject');
+    if (effectsEnabled) setTimeout(() => { card.classList.remove('blink-good'); card.classList.remove('blink-reject'); }, 350);
   });
 }
 
 function labelsFor(machines) {
-  return machines.map(m => `${m.machine} (${m.job})`);
+  return machines.map(m => String(m.job || '').trim());
 }
 
 function valuesFor(machines, key) {
-  return machines.map(m => m[key]);
+  return machines.map(m => {
+    const hasTx = latestTxMap && latestTxMap[m.machine] != null;
+    return hasTx ? m[key] : 0;
+  });
 }
 
 function sortMachines(machines) {
@@ -139,7 +165,7 @@ function ensureChart(machines) {
           x: { ticks: { color: '#333', autoSkip: true, maxRotation: 0 } },
           y: { beginAtZero: true, ticks: { color: '#333', stepSize: 1, callback: (v) => Number(v).toFixed(0) } }
         },
-        animation: { duration: 300 }
+        animation: { duration: 0 }
       }
     });
   } else {
@@ -150,20 +176,41 @@ function ensureChart(machines) {
   }
 }
 
+async function fetchTxMapIfStale(line) {
+  const stale = Date.now() - lastTxFetchAt > 8000;
+  if (!latestTxMap || stale) {
+    try {
+      const txRes = await fetch(`/api/lines/${encodeURIComponent(line)}/transmitters`, { headers: authHeaders() });
+      const txData = await txRes.json();
+      latestTxMap = (txData && txData.map) ? txData.map : {};
+      lastTxFetchAt = Date.now();
+    } catch { latestTxMap = {}; lastTxFetchAt = Date.now(); }
+  }
+}
+
 function renderSelected() {
   if (!latestState || !currentLine) return;
   const machines = sortMachines(latestState.lines[currentLine] || []);
   const panelTitle = document.getElementById('panelTitle');
   panelTitle.textContent = `Status Mesin – ${currentLine}`;
   const grid = document.getElementById('grid');
-  grid.innerHTML = '';
+ 
   const styleFromMeta = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
   const notice = document.getElementById('noOrderNotice');
   const hasOrder = !!styleFromMeta && machines.length > 0;
   const styleName = hasOrder ? styleFromMeta : null;
   if (notice) notice.classList.toggle('d-none', hasOrder);
-  buildGrid(machines);
-  ensureChart(machines);
+  (async () => {
+    await fetchTxMapIfStale(currentLine);
+    const sig = machines.map(m => {
+      const t = latestTxMap && latestTxMap[m.machine] != null ? 1 : 0;
+      return `${m.machine}|${m.good}|${m.reject}|${m.status}|${t}`;
+    }).join(';');
+    if (sig === lastGridSig) return;
+    if (!gridBuilt || !grid || grid.children.length === 0) { buildGrid(machines); gridBuilt = true; } else { updateGrid(machines); }
+    lastGridSig = sig;
+  })();
+  if (currentView === 'grafik') ensureChart(machines);
   const gridSection = document.getElementById('gridSection');
   const chartSection = document.getElementById('chartSection');
   const gridOn = currentView === 'task';
@@ -175,27 +222,40 @@ socket.on('updateData', (payload) => {
   latestState = payload;
   const select = document.getElementById('lineSelect');
   const label = document.querySelector('label[for="lineSelect"]');
-  const allowed = currentUser && currentUser.role === 'line_admin' ? (currentUser.lines || []) : (latestState.list || []);
-  if (currentUser && currentUser.role === 'line_admin') {
+  const allLines = Array.isArray(latestState.list) ? latestState.list : [];
+  const isLineAdmin = currentUser && currentUser.role === 'line_admin';
+  const userLines = Array.isArray(currentUser && currentUser.lines) ? currentUser.lines : [];
+  if (isLineAdmin) {
     if (label) label.classList.add('d-none');
-    if (select) select.classList.add('d-none');
+    if (select) { select.classList.add('d-none'); select.disabled = true; }
   } else {
     if (label) label.classList.remove('d-none');
-    if (select) select.classList.remove('d-none');
+    if (select) { select.classList.remove('d-none'); select.disabled = false; }
   }
-  if (currentUser && currentUser.role === 'line_admin') {
-    if (!currentLine || !allowed.includes(currentLine)) {
-      currentLine = allowed[0] || null;
+  if (isLineAdmin) {
+    const norm = (s) => String(s || '').toLowerCase().replace(/[\s\-]+/g,'').trim();
+    const allowed = allLines.filter(L => userLines.some(u => norm(L) === norm(u)));
+    let preferred = allowed[0] || userLines.find(u => allLines.includes(u)) || null;
+    if (!preferred) {
+      const uname = String(currentUser && currentUser.username || '').toUpperCase();
+      let tok = uname.replace(/^ADM[_\-]?/,'').replace(/^ADMLINE[_\-]?/,'').trim();
+      tok = tok.replace(/^LINE[_\- ]?/,'').trim();
+      if (tok) {
+        const candExact = allLines.find(L => String(L).toUpperCase() === `LINE ${tok}`.replace(/\s+/g,' ').trim());
+        const candIncl = allLines.find(L => String(L).toUpperCase().includes(`LINE ${tok}`.toUpperCase()));
+        preferred = candExact || candIncl || null;
+      }
     }
+    currentLine = preferred || currentLine;
   }
-  if (select.options.length === 0 && allowed && allowed.length) {
-    allowed.forEach(l => {
+  if (!isLineAdmin && select.options.length === 0 && allLines && allLines.length) {
+    allLines.forEach(l => {
       const opt = document.createElement('option');
       opt.value = l;
       opt.textContent = l;
       select.appendChild(opt);
     });
-    currentLine = allowed[0];
+    currentLine = allLines[0];
     select.value = currentLine;
   }
   const machines = Array.isArray(latestState.lines[currentLine]) ? latestState.lines[currentLine] : [];
@@ -207,6 +267,17 @@ socket.on('updateData', (payload) => {
   const mapClass = (s) => s === 'kemeja' ? 'style-kemeja' : s === 'celana' ? 'style-celana' : s === 'rok' ? 'style-rok' : s === 'sweater' ? 'style-sweater' : '';
   badge.textContent = styleName || '—';
   badge.className = `style-badge ${mapClass(toClass(styleName))}`;
+  if (!styleName && currentLine) {
+    (async () => {
+      try {
+        const r = await fetch(`/api/lines/${encodeURIComponent(currentLine)}/style`, { headers: authHeaders() });
+        const d = await r.json();
+        const s2 = (d && d.style) || null;
+        badge.textContent = s2 || '—';
+        badge.className = `style-badge ${mapClass(toClass(s2))}`;
+      } catch {}
+    })();
+  }
   const lineStatus = latestState.meta && latestState.meta[currentLine] ? (latestState.meta[currentLine].status || 'active') : 'active';
   const dot = document.getElementById('lineStatusDot');
   if (dot) dot.className = `status-dot status-${lineStatus}`;
@@ -215,9 +286,12 @@ socket.on('updateData', (payload) => {
 
 const lineSelect = document.getElementById('lineSelect');
 lineSelect.addEventListener('change', () => {
+  if (currentUser && currentUser.role === 'line_admin') return;
   currentLine = lineSelect.value;
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
+  gridBuilt = false;
+  lastGridSig = '';
   const machines = Array.isArray(latestState.lines[currentLine]) ? latestState.lines[currentLine] : [];
   const styleFromMeta = latestState.meta && latestState.meta[currentLine] ? latestState.meta[currentLine].style : null;
   const hasOrder = !!styleFromMeta && machines.length > 0;
@@ -260,6 +334,20 @@ if (btnGrafik) btnGrafik.addEventListener('click', () => setView('grafik'));
     if (res.ok) {
       currentUser = await res.json();
       enforceRoleUI();
+      if (currentUser && currentUser.role === 'line_admin') {
+        try {
+          const lr = await fetch('/api/lines', { headers: authHeaders() });
+          const ld = await lr.json();
+          const lines = Array.isArray(ld && ld.lines) ? ld.lines : [];
+          if (lines.length) {
+            currentLine = lines[0];
+            const labelEl = document.querySelector('label[for="lineSelect"]');
+            const selectEl = document.getElementById('lineSelect');
+            if (labelEl) labelEl.classList.add('d-none');
+            if (selectEl) { selectEl.classList.add('d-none'); selectEl.disabled = true; }
+          }
+        } catch {}
+      }
     } else {
       location.href = '/login';
       return;
@@ -277,7 +365,6 @@ applySidebar();
 const btnSidebar = document.getElementById('sidebarToggle');
 if (btnSidebar) {
   btnSidebar.addEventListener('click', () => {
-    if (currentUser && currentUser.role === 'line_admin') return;
     sidebarOpen = !sidebarOpen;
     applySidebar();
     try { sessionStorage.setItem('sb', sidebarOpen ? '1' : '0'); } catch {}
@@ -324,11 +411,19 @@ function enforceRoleUI() {
   const logoutInlineBtn = document.getElementById('logoutInline');
   if (currentUser && currentUser.role === 'line_admin') {
     sidebarOpen = false;
+    try { sessionStorage.setItem('sb', '0'); } catch {}
     applySidebar();
     if (sidebar) sidebar.classList.add('d-none');
     if (burger) burger.classList.add('d-none');
     if (sidebarLogout) sidebarLogout.classList.add('d-none');
     if (logoutInlineBtn) logoutInlineBtn.classList.remove('d-none');
+    const lineLabel = document.querySelector('label[for="lineSelect"]');
+    const lineSelect = document.getElementById('lineSelect');
+    if (lineLabel) lineLabel.classList.add('d-none');
+    if (lineSelect) { lineSelect.classList.add('d-none'); lineSelect.disabled = true; }
+    setView('task');
+    restoreDashboard();
+    setRouteIndicator('dashboard');
   } else if (currentUser && currentUser.role === 'tech_admin') {
     if (sidebar) sidebar.classList.remove('d-none');
     if (burger) burger.classList.remove('d-none');
@@ -348,7 +443,7 @@ function enforceRoleUI() {
         setRouteIndicator('master-mesin');
       } else if (route === 'master-button') {
         showMasterCounter();
-        setMcTab(mcStored || 'transmitter');
+        setMcTab(mcStored || 'receiver');
         setRouteIndicator('master-button');
       } else if (route === 'master-order') {
         showMasterOrder();
@@ -391,12 +486,14 @@ let mmJenisIndex = [];
 let mmModalAction = null;
 let mmModalEditId = null;
 
-let mcTab = 'transmitter';
+let mcTab = 'receiver';
 let mcRows = [];
+let mcRefreshTimer = null;
 
 let mlRows = [];
 let mlModalAction = null;
 let mlModalEditId = null;
+let latestTxMap = {};
 
 function authHeaders() {
   const headers = { 'Content-Type': 'application/json' };
@@ -846,7 +943,7 @@ function setMmTab(tab) {
 
 function showMasterCounter() {
   showSectionOnly('masterCounterSection');
-  setMcTab('transmitter');
+  setMcTab('receiver');
 }
 
 function setMcTab(tab) {
@@ -855,12 +952,13 @@ function setMcTab(tab) {
   tabs.forEach(el => el.classList.toggle('active', el.getAttribute('data-mc-tab') === tab));
   const crumb = document.getElementById('mcCrumb');
   if (crumb) {
-    crumb.textContent = tab === 'transmitter' ? 'Transmitter' : (tab === 'receiver' ? 'Receiver' : 'Task');
+    crumb.textContent = tab === 'transmitter' ? 'Transmitter' : (tab === 'receiver' ? 'Receiver' : (tab === 'logs' ? 'Logs' : 'Task'));
   }
   const addBtn = document.getElementById('mcAddBtn');
   if (addBtn) addBtn.classList.toggle('d-none', true);
   try { sessionStorage.setItem('mcTab', mcTab); } catch {}
   fetchMcData();
+  setupMcRefresh();
 }
 
 function fetchMcData() {
@@ -879,10 +977,56 @@ function fetchMcData() {
     return;
   }
   if (panel) panel.classList.add('d-none');
-  if (thead && tbody) {
-    thead.innerHTML = '<tr><th>ID</th><th>Nama</th><th style="width:120px">Aksi</th></tr>';
-    tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Belum ada data</td></tr>';
+  if (!thead || !tbody) return;
+  if (mcTab === 'transmitter') {
+    thead.innerHTML = '<tr><th>TX</th><th>Nama</th><th>Receiver MAC</th><th>Output</th><th>Reject</th><th>Total Output</th><th>Total Reject</th></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Memuat…</td></tr>';
+    (async () => {
+      try {
+        const res = await fetch('/api/transmitters', { headers: authHeaders() });
+        const data = await res.json();
+        const rows = Array.isArray(data) ? data : [];
+        tbody.innerHTML = rows.length ? rows.map(r => `<tr><td>${r.tx}</td><td>${r.name || ''}</td><td>${r.receiver_mac || ''}</td><td>${r.output || 0}</td><td>${r.reject || 0}</td><td>${r.output_total || 0}</td><td>${r.reject_total || 0}</td></tr>`).join('') : '<tr><td colspan="7" class="text-muted">Belum ada data</td></tr>';
+      } catch { tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Gagal memuat</td></tr>'; }
+    })();
+  } else if (mcTab === 'receiver') {
+    thead.innerHTML = '<tr><th>MAC</th><th>Nama</th><th>Last Seen</th><th>Status</th></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Memuat…</td></tr>';
+    (async () => {
+      try {
+        const res = await fetch('/api/status', { headers: authHeaders() });
+        const data = await res.json();
+        const rows = Array.isArray(data) ? data : [];
+        tbody.innerHTML = rows.length ? rows.map(r => {
+          const last = r.last_seen ? new Date(r.last_seen).toLocaleString() : '—';
+          const s = r.connected ? '<span class="badge bg-success">Connected</span>' : '<span class="badge bg-secondary">Offline</span>';
+          return `<tr><td>${r.mac_address}</td><td>${r.name || ''}</td><td>${last}</td><td>${s}</td></tr>`;
+        }).join('') : '<tr><td colspan="4" class="text-muted">Belum ada data</td></tr>';
+      } catch { tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Gagal memuat</td></tr>'; }
+    })();
+  } else if (mcTab === 'logs') {
+    thead.innerHTML = '<tr><th>ID</th><th>Receiver</th><th>TX</th><th>Type</th><th>Output</th><th>Reject</th><th>Timestamp</th></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Memuat…</td></tr>';
+    (async () => {
+      try {
+        const res = await fetch('/api/logs', { headers: authHeaders() });
+        const data = await res.json();
+        const rows = Array.isArray(data) ? data : [];
+        tbody.innerHTML = rows.length ? rows.map(r => {
+          const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : '—';
+          return `<tr><td>${r.id}</td><td>${r.rx || ''}</td><td>${r.tx || ''}</td><td>${r.type}</td><td>${r.value_output || 0}</td><td>${r.value_reject || 0}</td><td>${ts}</td></tr>`;
+        }).join('') : '<tr><td colspan="7" class="text-muted">Belum ada data</td></tr>';
+      } catch { tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Gagal memuat</td></tr>'; }
+    })();
   }
+}
+
+function setupMcRefresh() {
+  if (mcRefreshTimer) { clearInterval(mcRefreshTimer); mcRefreshTimer = null; }
+  if (mcTab === 'task') return;
+  mcRefreshTimer = setInterval(() => {
+    try { fetchMcData(); } catch {}
+  }, 5000);
 }
 
 const mcTabs = document.getElementById('mcTabs');
@@ -913,12 +1057,30 @@ async function renderMcTask(line) {
   try {
     const res = await fetch(`/api/lines/${encodeURIComponent(line)}`, { headers: authHeaders() });
     const data = await res.json();
-    const machines = sortMachines(Array.isArray(data && data.data) ? data.data : []);
+    let machines = sortMachines(Array.isArray(data && data.data) ? data.data : []);
+    const qEl = document.getElementById('mcSearch');
+    const qRaw = qEl && qEl.value ? qEl.value : '';
+    const q = String(qRaw || '').trim().toLowerCase();
+    if (q) {
+      const tokens = q.split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+      machines = machines.filter(m => {
+        const name = String(m.machine || '').toLowerCase();
+        const job = String(m.job || '').toLowerCase();
+        if (tokens.length === 0) return name.includes(q) || job.includes(q);
+        return tokens.some(tok => name.includes(tok) || job.includes(tok));
+      });
+    }
     const txRes = await fetch(`/api/lines/${encodeURIComponent(line)}/transmitters`, { headers: authHeaders() });
     const txData = await txRes.json();
-    const txList = Array.isArray(txData && txData.transmitters) ? txData.transmitters : [];
+    const masterTxList = Array.isArray(txData && txData.transmitters) ? txData.transmitters : [];
     const txMap = (txData && txData.map) ? txData.map : {};
-    buildMcTaskGrid(machines, txList, txMap);
+    let iotList = [];
+    try {
+      const iRes = await fetch('/api/transmitters', { headers: authHeaders() });
+      const iData = await iRes.json();
+      iotList = Array.isArray(iData) ? iData : [];
+    } catch {}
+    buildMcTaskGrid(machines, masterTxList, txMap, iotList);
   } catch {}
 }
 
@@ -930,30 +1092,50 @@ if (mcTaskSel) {
   });
 }
 
-function buildMcTaskGrid(machines, txList, txMap) {
+const mcSearch = document.getElementById('mcSearch');
+if (mcSearch) {
+  mcSearch.addEventListener('input', () => {
+    const sel = document.getElementById('mcTaskLineSelect');
+    const v = sel && sel.value ? sel.value : '';
+    if (v) renderMcTask(v);
+  });
+}
+
+function buildMcTaskGrid(machines, txList, txMap, iotList) {
   const grid = document.getElementById('mcTaskGrid');
   if (!grid) return;
   grid.innerHTML = '';
   const inUse = new Set(Object.values(txMap || {}).filter(v => v != null).map(v => Number(v)));
+  const idByKey = new Map((Array.isArray(txList) ? txList : []).flatMap(t => {
+    const pairs = [];
+    if (t.name) pairs.push([String(t.name), Number(t.id_tx)]);
+    if (t.device_id) pairs.push([String(t.device_id), Number(t.id_tx)]);
+    return pairs;
+  }));
   machines.forEach(m => {
     const card = document.createElement('div');
     card.className = 'machine-card';
     card.dataset.machine = m.machine;
-    const opts = ['<option value=\"\">Pilih transmitter</option>'].concat(txList.map(t => {
-      const sel = txMap && txMap[m.machine] == t.id_tx;
-      const dis = inUse.has(Number(t.id_tx)) && !sel ? 'disabled' : '';
-      return `<option value=\"${t.id_tx}\" ${sel ? 'selected' : ''} ${dis}>${t.name}</option>`;
+    const src = Array.isArray(iotList) && iotList.length ? iotList : (Array.isArray(txList) ? txList.map(t => ({ tx: t.name || t.device_id || String(t.id_tx) })) : []);
+    const opts = ['<option value=\"\">Pilih transmitter</option>'].concat(src.map(t => {
+      const key = String(t.tx || '').trim();
+      const id = idByKey.get(key) ?? null;
+      const sel = txMap && id != null && txMap[m.machine] == id;
+      const dis = id != null && inUse.has(Number(id)) && !sel ? 'disabled' : '';
+      const valAttr = id != null ? `value=\"${id}\"` : 'value=\"\"';
+      const keyAttr = id == null ? `data-key=\"${key}\"` : '';
+      const label = key || (t.name || '');
+      return `<option ${valAttr} ${keyAttr} ${sel ? 'selected' : ''} ${dis}>${label}</option>`;
     })).join('');
+    const dotCls = (String(m.status) === 'offline') ? 'status-offline' : (txMap && txMap[m.machine] != null ? 'status-active' : 'status-no-tx');
+    const parts = String(m.machine).split('-');
+    const machineType = parts.length >= 2 ? parts[parts.length - 2] : '';
     card.innerHTML = `
       <div class=\"machine-header\">
-        <div class=\"machine-title\">${m.machine}</div>
-        <div class=\"status-dot status-${m.status}\"></div>
+        <div class=\"machine-title\">${m.job}</div>
+        <div class=\"status-dot ${dotCls}\"></div>
       </div>
-      <div class=\"machine-job\">${m.job}</div>
-      <div class=\"counts\">
-        <div class=\"count-box\"><div class=\"count-title\">GOOD</div><div class=\"count-good\" data-type=\"good\">${m.good}</div></div>
-        <div class=\"count-box\"><div class=\"count-title\">REJECT</div><div class=\"count-reject\" data-type=\"reject\">${m.reject}</div></div>
-      </div>
+      <div class=\"machine-job\">${machineType}</div>
       <div class=\"mt-2\">
         <select class=\"form-select form-select-sm tx-select\">${opts}</select>
       </div>
@@ -966,17 +1148,24 @@ function buildMcTaskGrid(machines, txList, txMap) {
       const machine = card ? card.dataset.machine : '';
       const lineSel = document.getElementById('mcTaskLineSelect');
       const line = lineSel && lineSel.value ? lineSel.value : '';
+      const opt = e.target.selectedOptions && e.target.selectedOptions[0] ? e.target.selectedOptions[0] : null;
       const txidVal = e.target.value;
       const tx_id = txidVal ? parseInt(txidVal, 10) : null;
+      const tx_key = opt ? (opt.getAttribute('data-key') || null) : null;
       if (!line || !machine) return;
       try {
-        const res = await fetch(`/api/lines/${encodeURIComponent(line)}/machines/${encodeURIComponent(machine)}/transmitter`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ tx_id }) });
+        const payload = tx_id != null ? { tx_id } : { tx_id: null, tx_key };
+        const res = await fetch(`/api/lines/${encodeURIComponent(line)}/machines/${encodeURIComponent(machine)}/transmitter`, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
         if (res && res.status === 409) {
           const data = await res.json().catch(() => ({}));
         }
       } catch {}
       try {
         await renderMcTask(line);
+        if (currentLine && currentLine === line) {
+          lastTxFetchAt = 0;
+          renderSelected();
+        }
       } catch {}
     });
   });

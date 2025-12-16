@@ -160,6 +160,7 @@ body.theme-midnight .machine-job { color:#9CA3AF; }
 .status-idle { background: #F1C40F; }
 .status-error { background: var(--reject); }
 .status-offline { background: #9e9e9e; }
+.status-no-tx { background: var(--line-a); }
 
 .machine-job { font-size: 0.85rem; color: #666; margin-top: 6px; }
 

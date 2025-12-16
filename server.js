@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const db = require('./db');
 const auth = require('./auth');
 const { exportMySQLSQL } = require('./db_export');
+const mqtt = require('mqtt');
 
 const app = express();
 const server = http.createServer(app);
@@ -28,6 +29,25 @@ app.get('/login', (req, res) => {
 db.seedInitial();
 auth.seedIfEmpty();
 
+const MQTT_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
+const MQTT_TOPIC = process.env.MQTT_TOPIC || 'factory/rx/+/tx/+/event';
+try {
+  const client = mqtt.connect(MQTT_URL);
+  client.on('connect', () => { try { client.subscribe(MQTT_TOPIC, { qos: 1 }); } catch {} });
+  client.on('message', async (topic, msg) => {
+    try {
+      const p = topic.split('/');
+      const rxMac = p[2];
+      const tx = p[4];
+      let payload;
+      try { payload = JSON.parse(msg.toString()); } catch { return; }
+      if (!payload || !payload.type) return;
+      await db.iotHandleEvent(tx, rxMac, payload.type, payload);
+    } catch {}
+  });
+  client.on('error', () => {});
+} catch {}
+
 async function emitState() {
   const state = await db.getStateLive();
   io.emit('updateData', { ...state, timestamp: Date.now() });
@@ -38,9 +58,10 @@ async function simulateIntoDb() {
   for (const L of lines) {
     const lineStatus = await db.getLineStatusLive(L);
     if (lineStatus === 'offline') continue;
+    const txMap = await db.getMachineTxMapForLine(L);
     const arr = await db.getLineLive(L);
     if (!arr || arr.length === 0) continue;
-    const active = arr.filter(m => m.status !== 'offline');
+    const active = arr.filter(m => m.status !== 'offline' && txMap && txMap[m.machine] != null);
     if (active.length === 0) continue;
     const idx = Math.floor(Math.random() * active.length);
     const incGood = Math.random() < 0.9 ? Math.floor(Math.random() * 4) : 0;
@@ -140,9 +161,24 @@ app.post('/api/machines/increment', async (req, res) => {
   const user = await getAuthUser(req, res);
   if (!user) return;
   if (!canEditLine(user, line)) return res.status(403).json({ error: 'forbidden' });
+  try {
+    const map = await db.getMachineTxMapForLine(line);
+    const hasTx = map && map[machine] != null;
+    if (!hasTx) return res.status(409).json({ error: 'tx_required' });
+  } catch {}
   db.incrementMachine({ line, machine, goodDelta, rejectDelta, status });
   emitState();
   res.json({ ok: true });
+});
+
+app.post('/data', async (req, res) => {
+  const { tx, receiver_mac, type, value_output, value_reject, name, event_id } = req.body || {};
+  if (!tx || !receiver_mac || !type) return res.status(400).json({ error: 'tx_receiver_type_wajib' });
+  try {
+    await db.iotUpsertReceiver(receiver_mac, null);
+    const sum = await db.iotHandleEvent(tx, receiver_mac, type, { value_output, value_reject, event_id });
+    res.json({ ok: true, summary: sum });
+  } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
 });
 
 server.listen(PORT, () => {
@@ -195,6 +231,30 @@ app.get('/api/debug/master_users', async (req, res) => {
     res.json({ data: rows });
   } catch (e) {
     res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
+  }
+});
+
+app.post('/api/debug/drop-machine-tx-transmitters', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const result = await db.dropMachineTxAndTransmitters();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
+  }
+});
+
+app.post('/api/debug/drop-iot-transmitters', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const result = await db.dropIotTransmitters();
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'iot_error', message: String(e && e.message || '') });
   }
 });
 
@@ -260,12 +320,36 @@ app.post('/api/debug/upsert-user', async (req, res) => {
     if (!username || !password || !role) return res.status(400).json({ error: 'username_password_role_wajib' });
     await db.ensureButtonSchema();
     const pool = db.getButtonPool();
+    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
+    const [colsRows] = await pool.query('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = "master_users"', [dbname]);
+    const cols = Array.isArray(colsRows) ? colsRows.map(r => r.COLUMN_NAME || r.column_name).filter(Boolean) : [];
+    const has = (c) => cols.includes(c);
+    const [ex] = await pool.execute('SELECT id FROM master_users WHERE username = ? LIMIT 1', [String(username)]);
+    const exists = Array.isArray(ex) && ex[0];
     const lineStr = Array.isArray(lines) ? lines.join(',') : (typeof lines === 'string' ? lines : '');
-    await pool.execute(
-      'INSERT INTO master_users (username, role, password, lines) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE role=VALUES(role), password=VALUES(password), lines=VALUES(lines)',
-      [String(username), String(role), String(password), lineStr]
-    );
-    const [rows] = await pool.execute('SELECT id, username, role, lines FROM master_users WHERE username = ?', [String(username)]);
+    if (exists) {
+      const parts = [];
+      const args = [];
+      if (has('role')) { parts.push('role = ?'); args.push(String(role)); }
+      if (has('password')) { parts.push('password = ?'); args.push(String(password)); }
+      if (has('lines')) { parts.push('lines = ?'); args.push(lineStr); }
+      if (has('nama') && !has('lines')) { parts.push('nama = ?'); args.push(String(username)); }
+      if (!parts.length) return res.status(500).json({ error: 'db_error' });
+      args.push(String(username));
+      await pool.execute(`UPDATE master_users SET ${parts.join(', ')} WHERE username = ?`, args);
+    } else {
+      const insCols = [];
+      const placeholders = [];
+      const args = [];
+      if (has('username')) { insCols.push('username'); placeholders.push('?'); args.push(String(username)); }
+      if (has('role')) { insCols.push('role'); placeholders.push('?'); args.push(String(role)); }
+      if (has('password')) { insCols.push('password'); placeholders.push('?'); args.push(String(password)); }
+      if (has('lines')) { insCols.push('lines'); placeholders.push('?'); args.push(lineStr); }
+      if (has('nama') && !has('lines')) { insCols.push('nama'); placeholders.push('?'); args.push(String(username)); }
+      if (!insCols.length) return res.status(500).json({ error: 'db_error' });
+      await pool.execute(`INSERT INTO master_users (${insCols.join(',')}) VALUES (${placeholders.join(',')})`, args);
+    }
+    const [rows] = await pool.execute('SELECT * FROM master_users WHERE username = ?', [String(username)]);
     const u = rows && rows[0] ? rows[0] : null;
     res.json({ ok: true, user: u });
   } catch {
@@ -422,7 +506,13 @@ app.post('/api/lines/:line/machines/:machine/transmitter', async (req, res) => {
   const machine = req.params.machine;
   if (!line || !machine) return res.status(400).json({ error: 'line_machine_wajib' });
   if (!canEditLine(user, line) && user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  const { tx_id } = req.body || {};
+  let { tx_id, tx_key } = req.body || {};
+  if (tx_id == null && tx_key) {
+    try {
+      const id = await db.findTransmitterIdByKey(tx_key);
+      if (id != null) tx_id = id;
+    } catch {}
+  }
   if (tx_id != null) {
     const map = await db.getMachineTxMapForLine(line);
     for (const k of Object.keys(map)) {
@@ -434,6 +524,102 @@ app.post('/api/lines/:line/machines/:machine/transmitter', async (req, res) => {
   }
   await db.setMachineTransmitter(machine, tx_id || null);
   res.json({ ok: true });
+});
+
+app.get('/api/iot/transmitters', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  try {
+    const list = await db.iotGetTransmitters();
+    res.json({ data: list });
+  } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
+});
+
+app.post('/api/iot/setup', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  try { await db.ensureIotSchema(); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
+});
+
+app.post('/api/iot/rebuild', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const { sql } = req.body || {};
+    await db.rebuildIotSchema(typeof sql === 'string' ? sql : null);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) });
+  }
+});
+
+app.post('/api/iot/seed', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const { seed, procedure } = req.body || {};
+    await db.installIotSeedAndProcedure(typeof seed === 'string' ? seed : null, typeof procedure === 'string' ? procedure : null);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) });
+  }
+});
+
+app.post('/api/iot/setup-buttondb', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  try { await db.ensureButtonIoTSchema(); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
+});
+
+app.get('/api/iot/logs', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  try {
+    const rows = await db.iotGetLogs(200);
+    res.json({ data: rows });
+  } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
+});
+
+app.get('/api/iot/status', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  try {
+    const rows = await db.iotGetStatus(10000);
+    res.json({ data: rows });
+  } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
+});
+
+// Minimal API aliases (no /api/iot prefix)
+app.get('/api/transmitters', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  try {
+    const list = await db.iotGetTransmitters();
+    res.json(Array.isArray(list) ? list : []);
+  } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
+});
+
+app.get('/api/logs', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  try {
+    const rows = await db.iotGetLogs(200);
+    res.json(Array.isArray(rows) ? rows : []);
+  } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
+});
+
+app.get('/api/status', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  try {
+    const threshold = Number(req.query.thresholdMs || 10000);
+    const rows = await db.iotGetStatus(threshold);
+    res.json(Array.isArray(rows) ? rows : []);
+  } catch (e) { res.status(500).json({ error: 'iot_error', message: String(e && e.message || e) }); }
 });
 
 app.get('/api/master/proses_produksi', async (req, res) => {

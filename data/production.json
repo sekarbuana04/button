@@ -5,62 +5,90 @@
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-1",
         "job": "Jahit Saku Belakang",
-        "good": 477,
-        "reject": 60,
+        "good": 3125,
+        "reject": 361,
         "status": "active",
-        "updatedAt": "2025-12-14T15:04:01.217Z"
+        "updatedAt": "2025-12-15T01:59:25.332Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Belakang-SIDE CUTTER-2",
         "job": "Jahit Saku Belakang",
-        "good": 417,
-        "reject": 36,
+        "good": 602,
+        "reject": 54,
         "status": "active",
-        "updatedAt": "2025-12-14T15:04:02.229Z"
+        "updatedAt": "2025-12-15T01:20:41.195Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-1",
         "job": "Jahit Saku Kangaroo",
-        "good": 442,
-        "reject": 56,
+        "good": 606,
+        "reject": 84,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:52.121Z"
+        "updatedAt": "2025-12-15T00:57:08.626Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Kangaroo-SIDE CUTTER-2",
         "job": "Jahit Saku Kangaroo",
-        "good": 408,
-        "reject": 53,
+        "good": 589,
+        "reject": 71,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:53.119Z"
+        "updatedAt": "2025-12-15T00:57:12.653Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-1",
         "job": "Jahit Saku Patch",
-        "good": 430,
-        "reject": 44,
+        "good": 3139,
+        "reject": 325,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:55.160Z"
+        "updatedAt": "2025-12-15T01:59:24.200Z"
       },
       {
         "line": "LINE 10A",
         "machine": "LINE 10A-Jahit Saku Patch-SIDE CUTTER-2",
         "job": "Jahit Saku Patch",
-        "good": 480,
-        "reject": 54,
+        "good": 635,
+        "reject": 68,
         "status": "active",
-        "updatedAt": "2025-12-14T15:03:54.133Z"
+        "updatedAt": "2025-12-15T00:57:07.710Z"
       }
     ],
     "LINE 10B": [],
     "LINE 11A": [],
     "LINE 11B": [],
     "LINE 12B": [],
-    "LINE 1A": [],
+    "LINE 1A": [
+      {
+        "line": "LINE 1A",
+        "machine": "LINE 1A-Jahit Pesak-DOUBLE NEEDLE-1",
+        "job": "Jahit Pesak",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-15T04:42:24.136Z"
+      },
+      {
+        "line": "LINE 1A",
+        "machine": "LINE 1A-Jahit Pesak-DOUBLE NEEDLE-2",
+        "job": "Jahit Pesak",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-15T04:42:24.137Z"
+      },
+      {
+        "line": "LINE 1A",
+        "machine": "LINE 1A-Jahit Pesak-DOUBLE NEEDLE-3",
+        "job": "Jahit Pesak",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-15T04:42:24.138Z"
+      }
+    ],
     "LINE 1B": [],
     "LINE 2A": [],
     "LINE 2B": [],
@@ -73,7 +101,35 @@
     "LINE 6B": [],
     "LINE 7A": [],
     "LINE 7B": [],
-    "LINE 7C": [],
+    "LINE 7C": [
+      {
+        "line": "LINE 7C",
+        "machine": "LINE 7C-Jahit Plaket-SIDE CUTTER-1",
+        "job": "Jahit Plaket",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-15T01:19:43.794Z"
+      },
+      {
+        "line": "LINE 7C",
+        "machine": "LINE 7C-Jahit Plaket-SIDE CUTTER-2",
+        "job": "Jahit Plaket",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-15T01:19:43.795Z"
+      },
+      {
+        "line": "LINE 7C",
+        "machine": "LINE 7C-Jahit Plaket-SIDE CUTTER-3",
+        "job": "Jahit Plaket",
+        "good": 0,
+        "reject": 0,
+        "status": "active",
+        "updatedAt": "2025-12-15T01:19:43.795Z"
+      }
+    ],
     "LINE 8A": [],
     "Danau Toba": [],
     "Raja Ampat": [],
@@ -99,19 +155,19 @@
         "line": "Line 1",
         "machine": "Line 1-Proc-01-1",
         "job": "Job A",
-        "good": 902,
-        "reject": 104,
+        "good": 18569,
+        "reject": 2077,
         "status": "active",
-        "updatedAt": "2025-12-14T15:04:02.229Z"
+        "updatedAt": "2025-12-15T02:39:00.119Z"
       },
       {
         "line": "Line 1",
         "machine": "Line 1-Proc-01-2",
         "job": "Job B",
-        "good": 1037,
-        "reject": 108,
+        "good": 2173,
+        "reject": 237,
         "status": "active",
-        "updatedAt": "2025-12-14T15:04:02.230Z"
+        "updatedAt": "2025-12-15T00:57:13.667Z"
       }
     ],
     "Line 2": []
@@ -155,11 +211,7 @@
     "Pantai Kuta",
     "Pantai Nihiwatu",
     "Pantai Parangtritis",
-    "Danau Sentani",
-    "Line 1",
-    "Line 2",
-    "Line 1",
-    "Line 2"
+    "Danau Sentani"
   ],
   "meta": {
     "LINE 10A": {
@@ -195,7 +247,14 @@
     "LINE 1A": {
       "style": null,
       "status": "active",
-      "processes": [],
+      "processes": [
+        {
+          "name": "Jahit Pesak"
+        },
+        {
+          "name": "Fusing"
+        }
+      ],
       "defaults": {}
     },
     "LINE 1B": {
@@ -273,8 +332,17 @@
     "LINE 7C": {
       "style": null,
       "status": "active",
-      "processes": [],
-      "defaults": {}
+      "processes": [
+        {
+          "name": "Jahit Plaket"
+        }
+      ],
+      "defaults": {
+        "Jahit Plaket": {
+          "type": "SIDE CUTTER",
+          "qty": 3
+        }
+      }
     },
     "LINE 8A": {
       "style": null,
@@ -395,18 +463,12 @@
       "status": "active",
       "processes": [],
       "defaults": {}
-    },
-    "Line 1": {
-      "style": null,
-      "status": "active",
-      "processes": [],
-      "defaults": {}
-    },
-    "Line 2": {
-      "style": null,
-      "status": "active",
-      "processes": [],
-      "defaults": {}
     }
+  },
+  "iot": {
+    "receivers": [],
+    "summary": {},
+    "logs": [],
+    "resets": []
   }
 }

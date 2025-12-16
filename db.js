@@ -39,6 +39,8 @@ const DB_MYSQL = (process.env.DB_MYSQL || 'true').toLowerCase() === 'true';
 let pool = null;
 let poolButton = null;
 let BUTTON_DB_READY = false;
+let poolIot = null;
+let IOT_DB_READY = false;
 
 async function discoverMasterUsersSchema({ host, user, password, port }) {
   try {
@@ -144,6 +146,50 @@ async function initButtonDB() {
     BUTTON_DB_READY = Array.isArray(rows);
   } catch {
     BUTTON_DB_READY = false;
+  }
+}
+
+async function initIotDB() {
+  if (poolIot) return;
+  const host = process.env.DB_HOST || '127.0.0.1';
+  const port = Number(process.env.DB_PORT || 3306);
+  let user = process.env.DB_USER || '';
+  let password = process.env.DB_PASS || '';
+  const dbName = process.env.IOT_DB_NAME || 'iot_db';
+  const candidates = [
+    { user, password },
+    { user: 'root', password: '' },
+    { user: 'root', password: 'root' },
+    { user: 'mysql', password: '' },
+    { user: 'admin', password: '' }
+  ];
+  let cred = { user, password };
+  let connected = false;
+  for (const c of candidates) {
+    try {
+      const conn = await mysql.createConnection({ host, user: c.user, password: c.password, port });
+      await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+      await conn.end();
+      cred = c;
+      connected = true;
+      break;
+    } catch {}
+  }
+  if (!connected) { IOT_DB_READY = false; return; }
+  poolIot = await mysql.createPool({
+    host,
+    user: cred.user,
+    password: cred.password,
+    port,
+    database: dbName,
+    waitForConnections: true,
+    connectionLimit: 10
+  });
+  try {
+    const [rows] = await poolIot.query('SELECT 1 AS ok');
+    IOT_DB_READY = Array.isArray(rows);
+  } catch {
+    IOT_DB_READY = false;
   }
 }
 
@@ -754,6 +800,43 @@ async function migrateLegacyTables() {
   return { ok: true };
 }
 
+async function dropMachineTxAndTransmitters() {
+  await ensureButtonMasterSchema();
+  const poolConn = poolButton;
+  try { await dropTableWithFk(poolConn, 'machine_tx'); } catch {}
+  try { await dropTableWithFk(poolConn, 'transmitters'); } catch {}
+  try { await dropTableWithFk(poolConn, 'transmitter'); } catch {}
+  return { ok: true };
+}
+
+async function dropIotTransmitters() {
+  await initIotDB();
+  if (!IOT_DB_READY) return { ok: false };
+  const conn = poolIot;
+  try { await dropTableWithFk(conn, 'summary'); } catch {}
+  try { await dropTableWithFk(conn, 'logs'); } catch {}
+  try { await dropTableWithFk(conn, 'resets'); } catch {}
+  try { await dropTableWithFk(conn, 'transmitters'); } catch {}
+  return { ok: true };
+}
+
+async function ensureButtonIoTSchema() {
+  await initButtonDB();
+  if (!BUTTON_DB_READY) return;
+  try {
+    await poolButton.execute('CREATE TABLE IF NOT EXISTS receivers (receiver_id INT AUTO_INCREMENT PRIMARY KEY, mac_address VARCHAR(32) NOT NULL UNIQUE, name VARCHAR(128), last_seen DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+  } catch {}
+  try {
+    await poolButton.execute('CREATE TABLE IF NOT EXISTS summary (tx VARCHAR(64) PRIMARY KEY, output INT DEFAULT 0, reject INT DEFAULT 0, output_total INT DEFAULT 0, reject_total INT DEFAULT 0, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)');
+  } catch {}
+  try {
+    await poolButton.execute('CREATE TABLE IF NOT EXISTS logs (id BIGINT AUTO_INCREMENT PRIMARY KEY, rx INT NULL, tx VARCHAR(64) NOT NULL, type VARCHAR(16) NOT NULL, value_output INT NULL, value_reject INT NULL, event_id VARCHAR(64) NULL UNIQUE, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_logs_tx_ts (tx, timestamp), INDEX idx_logs_rx_ts (rx, timestamp))');
+  } catch {}
+  try {
+    await poolButton.execute('CREATE TABLE IF NOT EXISTS resets (id BIGINT AUTO_INCREMENT PRIMARY KEY, tx VARCHAR(64) NOT NULL, prev_output INT NOT NULL, prev_reject INT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_resets_tx_ts (tx, timestamp))');
+  } catch {}
+}
+
 module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLineStyle, setLineStatus, upsertMachine, incrementMachine, getStateLive, getLinesLive, getLineLive, getLineStyleLive, getLineStatusLive, 
   initMySQL, getMySQLPool,
   initButtonDB, ensureButtonSchema, getButtonPool: () => poolButton,
@@ -768,7 +851,9 @@ module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLi
   migrateLegacyTables,
   getTransmitters, createTransmitter, updateTransmitter, deleteTransmitter,
   getMachineTx, setMachineTransmitter, getMachineTxMapForLine,
-  isButtonDbReady };
+  dropMachineTxAndTransmitters,
+  dropIotTransmitters,
+  isButtonDbReady, ensureButtonIoTSchema };
 async function ensurePrimarySchema() {
   await initMySQL();
 }
@@ -1288,6 +1373,30 @@ async function deleteTransmitter(id) {
   return { ok: true };
 }
 
+async function findTransmitterIdByKey(key) {
+  await ensureButtonMasterSchema();
+  const k = String(key || '').trim();
+  if (!k) return null;
+  if (!BUTTON_DB_READY) {
+    const cur = Array.isArray(state.transmitters) ? state.transmitters.slice() : [];
+    const found = cur.find(t => String(t.name || '') === k || String(t.device_id || '') === k);
+    if (found) return found.id_tx || null;
+    const nextId = cur.length ? Math.max(...cur.map(t => Number(t.id_tx) || 0)) + 1 : 1;
+    const row = { id_tx: nextId, name: k, device_id: k, status: 'idle' };
+    state.transmitters = cur.concat(row);
+    save();
+    return row.id_tx;
+  }
+  try {
+    const [rows] = await poolButton.query('SELECT id_tx FROM transmitters WHERE name = ? OR device_id = ? LIMIT 1', [k, k]);
+    if (Array.isArray(rows) && rows[0]) return rows[0].id_tx || null;
+  } catch {}
+  try {
+    const [res] = await poolButton.execute('INSERT INTO transmitters (name, device_id, status) VALUES (?,?,?)', [k, k, 'idle']);
+    return res.insertId || null;
+  } catch { return null; }
+}
+
 async function getMachineTx(machineId) {
   await ensureButtonMasterSchema();
   const [rows] = await poolButton.query('SELECT tx_id FROM machine_tx WHERE machine_id = ? LIMIT 1', [String(machineId)]);
@@ -1330,3 +1439,294 @@ async function getMachineTxMapForLine(line) {
     return map;
   } catch { return {}; }
 }
+
+function ensureIotState() {
+  state.iot = state.iot || { receivers: [], summary: {}, logs: [], resets: [], event_ids: [] };
+}
+
+async function ensureIotSchema() {
+  await initIotDB();
+  if (!IOT_DB_READY) return;
+}
+
+async function rebuildIotSchema(customSql) {
+  await initIotDB();
+  if (!IOT_DB_READY) return;
+  const conn = poolIot;
+  try {
+    await dropTableWithFk(conn, 'resets');
+    await dropTableWithFk(conn, 'logs');
+    await dropTableWithFk(conn, 'summary');
+    await dropTableWithFk(conn, 'transmitters');
+    await dropTableWithFk(conn, 'receivers');
+    const sql = (customSql != null && String(customSql).trim().length) ? String(customSql) : null;
+    if (sql) {
+      const stmts = sql.split(';').map(s => s.trim()).filter(Boolean);
+      for (const q of stmts) { await conn.execute(q); }
+    } else {
+      await conn.execute('CREATE TABLE receivers (receiver_id INT AUTO_INCREMENT PRIMARY KEY, mac_address VARCHAR(32) NOT NULL UNIQUE, name VARCHAR(128), last_seen DATETIME NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+      await conn.execute('CREATE TABLE transmitters (transmitter_id VARCHAR(64) PRIMARY KEY, name VARCHAR(128), receiver_id INT NULL, mqtt_topic VARCHAR(256) NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, CONSTRAINT fk_tx_rx FOREIGN KEY (receiver_id) REFERENCES receivers(receiver_id) ON UPDATE CASCADE ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+      await conn.execute('CREATE TABLE summary (tx VARCHAR(64) PRIMARY KEY, output INT DEFAULT 0, reject INT DEFAULT 0, output_total INT DEFAULT 0, reject_total INT DEFAULT 0, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, CONSTRAINT fk_sum_tx FOREIGN KEY (tx) REFERENCES transmitters(transmitter_id) ON UPDATE CASCADE ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+      await conn.execute('CREATE TABLE logs (id BIGINT AUTO_INCREMENT PRIMARY KEY, rx INT NULL, tx VARCHAR(64) NOT NULL, type VARCHAR(16) NOT NULL, value_output INT NULL, value_reject INT NULL, event_id VARCHAR(128) NULL UNIQUE, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_logs_tx (tx), INDEX idx_logs_rx (rx), INDEX idx_logs_ts (timestamp), CONSTRAINT fk_logs_rx FOREIGN KEY (rx) REFERENCES receivers(receiver_id) ON UPDATE CASCADE ON DELETE SET NULL, CONSTRAINT fk_logs_tx FOREIGN KEY (tx) REFERENCES transmitters(transmitter_id) ON UPDATE CASCADE ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+      await conn.execute('CREATE TABLE resets (id BIGINT AUTO_INCREMENT PRIMARY KEY, tx VARCHAR(64) NOT NULL, prev_output INT NOT NULL, prev_reject INT NOT NULL, event_id VARCHAR(128) NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_resets_tx FOREIGN KEY (tx) REFERENCES transmitters(transmitter_id) ON UPDATE CASCADE ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    }
+  } catch (e) {
+    throw e;
+  }
+}
+
+async function installIotSeedAndProcedure(seedSql, procSql) {
+  await initIotDB();
+  if (!IOT_DB_READY) return;
+  const conn = poolIot;
+  const seed = (seedSql != null && String(seedSql).trim().length) ? String(seedSql) : null;
+  const proc = (procSql != null && String(procSql).trim().length) ? String(procSql) : null;
+  if (seed) {
+    const cleaned = seed.split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
+    const stmts = cleaned.split(';').map(s => s.trim()).filter(Boolean);
+    for (const q of stmts) { await conn.execute(q); }
+  }
+  if (proc) {
+    const cleaned = proc.replace(/DELIMITER\s+.*/gi, '').replace(/\/\/\s*/g, '').trim();
+    await conn.query(cleaned);
+  }
+}
+
+async function iotUpsertReceiver(mac, name) {
+  ensureIotState();
+  await ensureIotSchema();
+  if (IOT_DB_READY) {
+    const m = String(mac || '').trim();
+    await poolIot.execute('INSERT INTO receivers (mac_address, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = COALESCE(VALUES(name), name)', [m, name || null]);
+    const [rows] = await poolIot.query('SELECT receiver_id, mac_address, name, last_seen FROM receivers WHERE mac_address = ? LIMIT 1', [m]);
+    return Array.isArray(rows) && rows[0] ? rows[0] : { mac_address: m, name, last_seen: null };
+  } else {
+    const rx = state.iot.receivers.find(r => String(r.mac_address) === String(mac));
+    if (rx) { if (name != null) rx.name = name; return rx; }
+    const row = { mac_address: String(mac), name: name || null, last_seen: null };
+    state.iot.receivers.push(row);
+    save();
+    return row;
+  }
+}
+
+async function iotUpdateReceiverLastSeen(mac) {
+  ensureIotState();
+  await ensureIotSchema();
+  if (IOT_DB_READY) {
+    const m = String(mac || '').trim();
+    await poolIot.execute('INSERT INTO receivers (mac_address, name, last_seen) VALUES (?, NULL, NOW()) ON DUPLICATE KEY UPDATE last_seen = NOW()', [m]);
+    const [rows] = await poolIot.query('SELECT receiver_id, mac_address, name, last_seen FROM receivers WHERE mac_address = ? LIMIT 1', [m]);
+    return Array.isArray(rows) && rows[0] ? rows[0] : { mac_address: m, name: null, last_seen: new Date().toISOString().slice(0,19).replace('T',' ') };
+  } else {
+    const rx = state.iot.receivers.find(r => String(r.mac_address) === String(mac));
+    const ts = Date.now();
+    if (rx) { rx.last_seen = ts; save(); return rx; }
+    const row = { mac_address: String(mac), name: null, last_seen: ts };
+    state.iot.receivers.push(row);
+    save();
+    return row;
+  }
+}
+
+async function iotUpsertSummary(tx, receiver_mac) {
+  ensureIotState();
+  await ensureIotSchema();
+  const key = String(tx || '').trim();
+  if (IOT_DB_READY) {
+    await poolIot.execute('INSERT INTO summary (tx, output, reject, output_total, reject_total) VALUES (?, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = VALUES(tx)', [key]);
+    const [rows] = await poolIot.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [key]);
+    const cur = Array.isArray(rows) && rows[0] ? rows[0] : { tx: key, output: 0, reject: 0, output_total: 0, reject_total: 0 };
+    return cur;
+  } else {
+    const cur = state.iot.summary[key] || { tx: key, name: null, receiver_mac: null, output: 0, reject: 0, output_total: 0, reject_total: 0, updated_at: null };
+    if (receiver_mac != null) cur.receiver_mac = String(receiver_mac);
+    cur.updated_at = Date.now();
+    state.iot.summary[key] = cur;
+    save();
+    return cur;
+  }
+}
+
+async function iotHandleEvent(tx, receiver_mac, type, payload) {
+  ensureIotState();
+  await ensureIotSchema();
+  const p = payload || {};
+  const m = String(receiver_mac || '').trim();
+  const t = String(tx || '').trim();
+  const eid = (p.event_id != null && String(p.event_id).trim().length) ? String(p.event_id).trim() : null;
+  if (IOT_DB_READY) {
+    try {
+      await poolIot.execute('CALL sp_handle_event(?,?,?,?,?,?)', [t, m, String(type || ''), p.value_output != null ? Number(p.value_output) : null, p.value_reject != null ? Number(p.value_reject) : null, eid]);
+      const [rows] = await poolIot.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [t]);
+      return Array.isArray(rows) && rows[0] ? rows[0] : { tx: t, output: 0, reject: 0, output_total: 0, reject_total: 0 };
+    } catch (e) {
+      const msg = String(e && e.message || e || '');
+      const dup = (e && e.code === 'ER_DUP_ENTRY') || /duplicate/i.test(msg);
+      const noProc = /does\s+not\s+exist|unknown\s+procedure|doesn't\s+exist/i.test(msg);
+      if (dup) {
+        const [rows] = await poolIot.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [t]);
+        return Array.isArray(rows) && rows[0] ? rows[0] : { tx: t, output: 0, reject: 0, output_total: 0, reject_total: 0 };
+      }
+      if (!noProc) throw e;
+    }
+    const conn = await poolIot.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute('INSERT INTO receivers (mac_address, name, last_seen) VALUES (?, NULL, NOW()) ON DUPLICATE KEY UPDATE last_seen = NOW()', [m]);
+      const [rxRow] = await conn.query('SELECT receiver_id FROM receivers WHERE mac_address = ? LIMIT 1', [m]);
+      const rxId = Array.isArray(rxRow) && rxRow[0] ? rxRow[0].receiver_id : null;
+      await conn.execute('INSERT INTO transmitters (transmitter_id, name, receiver_id) VALUES (?, NULL, ?) ON DUPLICATE KEY UPDATE receiver_id = COALESCE(VALUES(receiver_id), receiver_id)', [t, rxId]);
+      await conn.execute('INSERT INTO summary (tx, output, reject, output_total, reject_total) VALUES (?, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = VALUES(tx)', [t]);
+      if (eid) {
+        try {
+          const [dup] = await conn.query('SELECT id FROM logs WHERE event_id = ? LIMIT 1', [eid]);
+          if (Array.isArray(dup) && dup[0]) {
+            await conn.commit();
+            const [rows] = await conn.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [t]);
+            return Array.isArray(rows) && rows[0] ? rows[0] : { tx: t, output: 0, reject: 0, output_total: 0, reject_total: 0 };
+          }
+        } catch {}
+      }
+      if (type === 'output') {
+        await conn.execute('UPDATE summary SET output = output + 1, output_total = output_total + 1 WHERE tx = ?', [t]);
+        try { await conn.execute('INSERT INTO logs (rx, tx, type, value_output, value_reject, event_id) VALUES (?, ?, ?, ?, ?, ?)', [rxId, t, 'output', 1, 0, eid]); } catch {}
+      } else if (type === 'reject') {
+        await conn.execute('UPDATE summary SET reject = reject + 1, reject_total = reject_total + 1 WHERE tx = ?', [t]);
+        try { await conn.execute('INSERT INTO logs (rx, tx, type, value_output, value_reject, event_id) VALUES (?, ?, ?, ?, ?, ?)', [rxId, t, 'reject', 0, 1, eid]); } catch {}
+      } else if (type === 'reset') {
+        const [sumRows] = await conn.query('SELECT output, reject FROM summary WHERE tx = ? LIMIT 1 FOR UPDATE', [t]);
+        const cur = Array.isArray(sumRows) && sumRows[0] ? sumRows[0] : { output: 0, reject: 0 };
+        const out = Math.max(Number(cur.output || 0), Number(p.value_output || 0));
+        const rej = Math.max(Number(cur.reject || 0), Number(p.value_reject || 0));
+        try { await conn.execute('INSERT INTO resets (tx, prev_output, prev_reject, event_id) VALUES (?, ?, ?, ?)', [t, out, rej, eid]); } catch {}
+        try { await conn.execute('INSERT INTO logs (rx, tx, type, value_output, value_reject, event_id) VALUES (?, ?, ?, ?, ?, ?)', [rxId, t, 'reset', out, rej, eid]); } catch {}
+        await conn.execute('UPDATE summary SET output_total = output_total + ?, reject_total = reject_total + ?, output = 0, reject = 0 WHERE tx = ?', [out, rej, t]);
+      }
+      await conn.commit();
+      const [rows] = await conn.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [t]);
+      return Array.isArray(rows) && rows[0] ? rows[0] : { tx: t, output: 0, reject: 0, output_total: 0, reject_total: 0 };
+    } catch (e) {
+      try { await conn.rollback(); } catch {}
+      throw e;
+    } finally {
+      conn.release();
+    }
+  } else {
+    await iotUpsertReceiver(m, null);
+    await iotUpdateReceiverLastSeen(m);
+    if (eid) {
+      const seen = new Set(Array.isArray(state.iot.event_ids) ? state.iot.event_ids : []);
+      if (seen.has(eid)) {
+        const sum0 = await iotUpsertSummary(t, m);
+        return sum0;
+      }
+    }
+    const sum = await iotUpsertSummary(t, m);
+    if (type === 'output') {
+      sum.output = Number(sum.output || 0) + 1;
+      sum.output_total = Number(sum.output_total || 0) + 1;
+      state.iot.logs.unshift({ id: `${Date.now()}-${Math.random()}`, rx: m, tx: t, type: 'output', value_output: 1, value_reject: 0, event_id: eid || null, timestamp: Date.now() });
+    } else if (type === 'reject') {
+      sum.reject = Number(sum.reject || 0) + 1;
+      sum.reject_total = Number(sum.reject_total || 0) + 1;
+      state.iot.logs.unshift({ id: `${Date.now()}-${Math.random()}`, rx: m, tx: t, type: 'reject', value_output: 0, value_reject: 1, event_id: eid || null, timestamp: Date.now() });
+    } else if (type === 'reset') {
+      const out = Math.max(Number(sum.output || 0), Number(p.value_output || 0));
+      const rej = Math.max(Number(sum.reject || 0), Number(p.value_reject || 0));
+      state.iot.resets.unshift({ id: `${Date.now()}-${Math.random()}`, tx: t, prev_output: out, prev_reject: rej, event_id: eid || null, timestamp: Date.now() });
+      state.iot.logs.unshift({ id: `${Date.now()}-${Math.random()}`, rx: m, tx: t, type: 'reset', value_output: out, value_reject: rej, event_id: eid || null, timestamp: Date.now() });
+      sum.output_total = Number(sum.output_total || 0) + out;
+      sum.reject_total = Number(sum.reject_total || 0) + rej;
+      sum.output = 0;
+      sum.reject = 0;
+    }
+    sum.updated_at = Date.now();
+    if (eid) {
+      const arr = Array.isArray(state.iot.event_ids) ? state.iot.event_ids : [];
+      arr.push(eid);
+      if (arr.length > 10000) arr.splice(0, arr.length - 10000);
+      state.iot.event_ids = arr;
+    }
+    save();
+    return sum;
+  }
+}
+
+async function iotGetTransmitters() {
+  ensureIotState();
+  await ensureIotSchema();
+  if (IOT_DB_READY) {
+    const [rows] = await poolIot.query('SELECT s.tx, t.name, r.mac_address AS receiver_mac, s.output, s.reject, s.output_total, s.reject_total FROM summary s LEFT JOIN transmitters t ON t.transmitter_id = s.tx LEFT JOIN receivers r ON r.receiver_id = t.receiver_id ORDER BY s.tx ASC');
+    return Array.isArray(rows) ? rows : [];
+  } else {
+    const list = [];
+    for (const k of Object.keys(state.iot.summary)) {
+      const s = state.iot.summary[k];
+      list.push({ tx: s.tx, name: s.name, receiver_mac: s.receiver_mac, output: s.output || 0, reject: s.reject || 0, output_total: s.output_total || 0, reject_total: s.reject_total || 0, updated_at: s.updated_at || null });
+    }
+    list.sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0));
+    return list;
+  }
+}
+
+async function iotGetLogs(limit = 200) {
+  ensureIotState();
+  await ensureIotSchema();
+  const n = Math.max(1, Number(limit) || 200);
+  if (IOT_DB_READY) {
+    const [rows] = await poolIot.query('SELECT id, rx, tx, type, value_output, value_reject, timestamp FROM logs ORDER BY timestamp DESC LIMIT ?', [n]);
+    return Array.isArray(rows) ? rows : [];
+  } else {
+    const arr = Array.isArray(state.iot.logs) ? state.iot.logs.slice() : [];
+    arr.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+    return arr.slice(0, n);
+  }
+}
+
+async function iotGetStatus(thresholdMs = 10000) {
+  ensureIotState();
+  await ensureIotSchema();
+  if (IOT_DB_READY) {
+    const [rows] = await poolIot.query(
+      'SELECT r.mac_address, r.name, r.last_seen, ' +
+      '  (SELECT MAX(l.timestamp) FROM logs l WHERE l.rx = r.receiver_id) AS last_event ' +
+      'FROM receivers r ORDER BY COALESCE(last_event, r.last_seen) DESC'
+    );
+    const now = Date.now();
+    return (Array.isArray(rows) ? rows : []).map(r => {
+      const lastSeen = r.last_seen ? new Date(r.last_seen).getTime() : null;
+      const lastEvent = r.last_event ? new Date(r.last_event).getTime() : null;
+      const last = lastEvent != null ? lastEvent : lastSeen;
+      const connected = last != null && (now - last) <= thresholdMs;
+      return { mac_address: r.mac_address, name: r.name, last_seen: last, connected };
+    });
+  } else {
+    const now = Date.now();
+    const recs = (state.iot.receivers || []).map(r => {
+      const lastSeen = Number(r.last_seen || 0) || null;
+      const lastEvent = (() => {
+        const arr = Array.isArray(state.iot.logs) ? state.iot.logs : [];
+        const match = arr.find(x => String(x.rx || '') === String(r.mac_address));
+        return match ? Number(match.timestamp || 0) || null : null;
+      })();
+      const last = lastEvent != null ? lastEvent : lastSeen;
+      const connected = last != null && (now - last) <= thresholdMs;
+      return { mac_address: r.mac_address, name: r.name, last_seen: last, connected };
+    });
+    recs.sort((a, b) => Number(b.last_seen || 0) - Number(a.last_seen || 0));
+    return recs;
+  }
+}
+
+module.exports.iotUpsertReceiver = iotUpsertReceiver;
+module.exports.iotUpdateReceiverLastSeen = iotUpdateReceiverLastSeen;
+module.exports.iotUpsertSummary = iotUpsertSummary;
+module.exports.iotHandleEvent = iotHandleEvent;
+module.exports.iotGetTransmitters = iotGetTransmitters;
+module.exports.iotGetLogs = iotGetLogs;
+module.exports.iotGetStatus = iotGetStatus;
+module.exports.ensureIotSchema = ensureIotSchema;
+module.exports.rebuildIotSchema = rebuildIotSchema;
+module.exports.installIotSeedAndProcedure = installIotSeedAndProcedure;
+module.exports.findTransmitterIdByKey = findTransmitterIdByKey;
