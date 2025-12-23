@@ -1,18 +1,9 @@
 const crypto = require('crypto');
 const db = require('./db');
-const FAKE = (process.env.AUTH_FAKE || 'false').toLowerCase() === 'true';
-const fakeUsers = [
-  { id: 1, username: 'adminit', role: 'tech_admin', password: 'admin123', lines: [] },
-  { id: 2, username: 'admline', role: 'line_admin', password: 'line123', lines: ['Line 1','Line 2'] }
-];
+const FAKE = false;
+const fakeUsers = [];
 
 async function getUserByUsernameAsync(username) {
-  if (FAKE || !db.isButtonDbReady()) {
-    const unameQuery = String(username || '').trim().toLowerCase();
-    const u = fakeUsers.find(x => x.username.toLowerCase() === unameQuery) || null;
-    if (u) return { id: u.id, username: u.username, role: u.role, password: u.password, lines: u.lines };
-    // fallback ke DB jika user tidak ada di fake
-  }
   try {
     await db.ensureButtonSchema();
     const bpool = db.getButtonPool();
@@ -69,11 +60,6 @@ async function getUserByUsernameAsync(username) {
 }
 
 async function getUserByIdAsync(id) {
-  if (FAKE || !db.isButtonDbReady()) {
-    const u = fakeUsers.find(x => String(x.id) === String(id)) || null;
-    if (u) return { id: u.id, username: u.username, role: u.role, password: u.password, lines: u.lines };
-    // fallback ke DB jika tidak ada di fake
-  }
   try {
     await db.ensureButtonSchema();
     const bpool = db.getButtonPool();

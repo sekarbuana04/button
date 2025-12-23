@@ -4,11 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Operator Counter Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet" />
     <link href="/styles.css" rel="stylesheet" />
   </head>
   <body>
@@ -30,6 +27,7 @@
         <a href="#" class="nav-link px-3 py-2" data-nav="dashboard"><i class="bi bi-speedometer2 me-2"></i>Dashboard</a>
         <a href="#" class="nav-link px-3 py-2" data-nav="master-mesin"><i class="bi bi-gear me-2"></i>Master Mesin</a>
         <a href="#" class="nav-link px-3 py-2" data-nav="master-line"><i class="bi bi-diagram-3 me-2"></i>Master Line</a>
+        <a href="#" class="nav-link px-3 py-2" data-nav="master-color"><i class="bi bi-palette me-2"></i>Master Color</a>
         <a href="#" class="nav-link px-3 py-2" data-nav="master-style"><i class="bi bi-tag me-2"></i>Master Style</a>
         <a href="#" class="nav-link px-3 py-2" data-nav="master-proses"><i class="bi bi-list-check me-2"></i>Master Proses</a>
         <a href="#" class="nav-link px-3 py-2" data-nav="master-order"><i class="bi bi-receipt me-2"></i>Master Order</a>
@@ -86,6 +84,30 @@
         </div>
       </section>
 
+      <section id="masterColorSection" class="d-none">
+        <div class="row g-3">
+          <div class="col-12">
+            <div class="card shadow-sm">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="fw-semibold">Master Color</div>
+              </div>
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <input type="text" class="form-control" id="mcolSearch" placeholder="Cari warna..." style="max-width: 280px;" />
+                  <button class="btn btn-accent" id="mcolAddBtn">Tambah</button>
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-striped table-hover text-center" id="mcolTable">
+                    <thead id="mcolThead"></thead>
+                    <tbody id="mcolTbody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="masterCounterSection" class="d-none">
         <div class="row g-3">
           <div class="col-12">
@@ -104,6 +126,7 @@
                 <div class="segmented-toggle" id="mcTabs">
                   <button class="toggle-btn" data-mc-tab="receiver">Receiver</button>
                   <button class="toggle-btn" data-mc-tab="transmitter">Transmitter</button>
+                  <button class="toggle-btn" data-mc-tab="log">Log</button>
                   <button class="toggle-btn" data-mc-tab="task">Task</button>
                 </div>
               </div>
@@ -147,6 +170,7 @@
               <div class="card-header d-flex justify-content-between align-items-center">
                 <div class="fw-semibold">Master Mesin</div>
                 <div class="segmented-toggle" id="mmTabs">
+                  <button class="toggle-btn" data-mm-tab="kategori">Kategori Mesin</button>
                   <button class="toggle-btn active" data-mm-tab="jenis">Jenis Mesin</button>
                   <button class="toggle-btn" data-mm-tab="merk">Merk Mesin</button>
                 </div>
@@ -200,58 +224,14 @@
                 <div class="fw-semibold">Master Style</div>
               </div>
               <div class="card-body">
-                <div class="vstack gap-4">
-                  <div class="card p-3">
-                    <div class="fw-semibold mb-2">1. Pilih Jenis Pakaian</div>
-                    <div class="row g-3 align-items-end">
-                      <div class="col-md-3">
-                        <label class="form-label">Kategori</label>
-                        <select id="msCategory" class="form-select">
-                          <option value="">Pilih kategori</option>
-                          <option value="TOP">TOP</option>
-                          <option value="BOTTOM">BOTTOM</option>
-                        </select>
-                      </div>
-                      <div class="col-md-5">
-                        <label class="form-label">Jenis Pakaian</label>
-                        <select id="msType" class="form-select">
-                          <option value="">Pilih jenis</option>
-                        </select>
-                      </div>
-                      <div class="col-md-4">
-                        <div id="msTypeCard" class="border rounded p-3 bg-light d-flex align-items-center justify-content-between">
-                          <div>
-                            <div class="text-muted">Jenis terpilih</div>
-                            <div id="msTypeSelected" class="fw-semibold">—</div>
-                          </div>
-                          <i class="bi bi-tag fs-3 text-secondary"></i>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="card p-3">
-                    <div class="fw-semibold mb-2">2. Pilih Line Produksi</div>
-                    <div class="row g-3">
-                      <div class="col-md-6">
-                        <label class="form-label">Line Produksi</label>
-                        <select id="msLineSelect" class="form-select">
-                          <option value="">Pilih line</option>
-                        </select>
-                      </div>
-                      <div class="col-md-6 d-flex align-items-end">
-                        <div id="msLineDesc" class="text-muted">—</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="card p-3">
-                    <div class="fw-semibold mb-2">Review Order & Submit</div>
-                    <div id="msReview" class="mb-3"></div>
-                    <div class="d-flex justify-content-end">
-                      <button id="msSubmitOrder" class="btn btn-accent">Simpan Order Style</button>
-                    </div>
-                  </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <input type="text" class="form-control" id="msSearch" placeholder="Cari style..." style="max-width: 280px;" />
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-striped table-hover text-center" id="msTable">
+                    <thead id="msThead"></thead>
+                    <tbody id="msTbody"></tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -267,42 +247,14 @@
                 <div class="fw-semibold">Master Proses</div>
               </div>
               <div class="card-body">
-                <div class="row g-3">
-                  <div class="col-md-6">
-                    <label class="form-label">Pilih Line</label>
-                    <select id="mpLineSelect" class="form-select">
-                      <option value="">Pilih line</option>
-                    </select>
-                  </div>
-                  <div class="col-md-6 d-flex align-items-end">
-                    <div id="mpLineDesc" class="text-muted">—</div>
-                  </div>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <input type="text" class="form-control" id="mpSearch" placeholder="Cari proses..." style="max-width: 280px;" />
                 </div>
-                <div class="card p-3 mt-3" id="mpOrderCard">
-                  <div class="fw-semibold mb-2">Order Style (Read-only)</div>
-                  <div class="row g-3">
-                    <div class="col-md-4">
-                      <div class="border rounded p-3"><div class="text-muted">Kategori</div><div id="mpOrderCategory" class="fw-semibold">—</div></div>
-                    </div>
-                    <div class="col-md-4">
-                      <div class="border rounded p-3"><div class="text-muted">Jenis</div><div id="mpOrderType" class="fw-semibold">—</div></div>
-                    </div>
-                    <div class="col-md-4">
-                      <div class="border rounded p-3"><div class="text-muted">Total Proses</div><div id="mpOrderProcCount" class="fw-semibold">0</div></div>
-                    </div>
-                  </div>
-                </div>
-                <div class="card p-3 mt-3 d-none" id="mpAddProcCard">
-                  <div class="fw-semibold mb-2">2. Tambahkan Proses Produksi</div>
-                  <div class="d-flex align-items-center mb-2">
-                    <select id="mpProcessSelect" class="form-select flex-grow-1 me-3" disabled><option value="">Pilih proses</option></select>
-                    <button id="mpAddProcess" class="btn btn-accent btn-sm" disabled>Tambah Proses</button>
-                  </div>
-                  <div id="mpProcessList" class="vstack gap-2"></div>
-                </div>
-                <div class="card p-3 mt-3 d-none" id="mpManageMachinesCard">
-                  <div class="fw-semibold mb-2">3. Kelola Mesin per Proses</div>
-                  <div id="mpProcessSections" class="vstack gap-3"></div>
+                <div class="table-responsive">
+                  <table class="table table-striped table-hover text-center" id="mpTable">
+                    <thead id="mpThead"></thead>
+                    <tbody id="mpTbody"></tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -316,23 +268,98 @@
             <div class="card shadow-sm">
               <div class="card-header d-flex justify-content-between align-items-center">
                 <div class="fw-semibold">Master Order</div>
+                <div class="segmented-toggle" id="moTabs">
+                  <button class="toggle-btn active" data-mo-tab="order">Order</button>
+                  <button class="toggle-btn" data-mo-tab="summary">Summary</button>
+                </div>
               </div>
               <div class="card-body">
-                <div class="table-responsive">
-                  <table class="table table-striped table-hover text-center" id="moTable">
-                    <thead>
-                      <tr>
-                        <th>Line</th>
-                        <th>Kategori</th>
-                        <th>Jenis</th>
-                        <th>Total Proses</th>
-                        <th>Total Mesin</th>
-                        <th>Rincian Proses</th>
-                        <th>Aksi</th>
-                      </tr>
-                    </thead>
-                    <tbody id="moTbody"></tbody>
-                  </table>
+                <div id="moSummaryPanel">
+                  <div id="moSummaryDetail" class="mb-3"></div>
+                  <div class="table-responsive">
+                    <table class="table table-striped table-hover text-center" id="moTable">
+                      <thead>
+                        <tr>
+                          <th>Line</th>
+                          <th>Kategori</th>
+                          <th>Jenis</th>
+                          <th>Total Proses</th>
+                          <th>Total Mesin</th>
+                          <th>Rincian Proses</th>
+                          <th>Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody id="moTbody"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div id="moOrderPanel" class="d-none">
+                  <div class="vstack gap-4">
+                    <div class="card p-3">
+                      <div class="fw-semibold mb-2">1. Pilih Jenis Pakaian</div>
+                      <div class="row g-3 align-items-end">
+                        <div class="col-md-3">
+                          <label class="form-label">Kategori</label>
+                          <select id="moCategory" class="form-select">
+                            <option value="">Pilih kategori</option>
+                            <option value="TOP">TOP</option>
+                            <option value="BOTTOM">BOTTOM</option>
+                          </select>
+                        </div>
+                        <div class="col-md-5">
+                          <label class="form-label">Jenis Pakaian</label>
+                          <select id="moType" class="form-select">
+                            <option value="">Pilih jenis</option>
+                          </select>
+                        </div>
+                        <div class="col-md-4">
+                          <div class="border rounded p-3 bg-light d-flex align-items-center justify-content-between">
+                            <div>
+                              <div class="text-muted">Jenis terpilih</div>
+                              <div id="moTypeSelected" class="fw-semibold">—</div>
+                            </div>
+                            <i class="bi bi-tag fs-3 text-secondary"></i>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="card p-3">
+                      <div class="fw-semibold mb-2">2. Pilih Line Produksi</div>
+                      <div class="row g-3">
+                        <div class="col-md-6">
+                          <label class="form-label">Line Produksi</label>
+                          <select id="moLineSelect" class="form-select">
+                            <option value="">Pilih line</option>
+                          </select>
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                          <div id="moLineDesc" class="text-muted">—</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="card p-3">
+                      <div class="fw-semibold mb-2">Kelola Proses & Mesin</div>
+                      <div class="card p-3 mt-3" id="moProcAddProcCard">
+                        <div class="fw-semibold mb-2">2. Tambahkan Proses Produksi</div>
+                        <div class="d-flex align-items-center mb-2">
+                          <select id="moProcProcessSelect" class="form-select flex-grow-1 me-3" disabled><option value="">Pilih proses</option></select>
+                          <button id="moProcAddProcess" class="btn btn-accent btn-sm" disabled>Tambah Proses</button>
+                        </div>
+                        <div id="moProcProcessList" class="vstack gap-2"></div>
+                      </div>
+                      <div class="card p-3 mt-3" id="moProcManageMachinesCard">
+                        <div class="fw-semibold mb-2">3. Kelola Mesin per Proses</div>
+                        <div id="moProcProcessSections" class="vstack gap-3"></div>
+                      </div>
+                      <div class="card p-3 mt-3">
+                        <div class="fw-semibold mb-2">Review Order & Submit</div>
+                        <div id="moFinalReview" class="mb-3"></div>
+                        <div class="d-flex justify-content-end">
+                          <button id="moFinalSubmit" class="btn btn-accent">Simpan Order Style</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -375,7 +402,7 @@
     
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="/vendor/chart.js/chart.umd.min.js"></script>
     <script src="/app.js"></script>
   </body>
   </html>

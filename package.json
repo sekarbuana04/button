@@ -10,9 +10,12 @@
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "bootstrap": "^5.3.2",
+    "bootstrap-icons": "^1.11.3",
+    "chart.js": "^4.4.1",
     "express": "^4.19.2",
     "mysql2": "^3.15.3",
-    "socket.io": "^4.7.5",
-    "mqtt": "^5.10.0"
+    "mqtt": "^5.10.0",
+    "socket.io": "^4.7.5"
   }
 }
