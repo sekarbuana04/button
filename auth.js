@@ -26,7 +26,7 @@ async function getUserByUsernameAsync(username) {
       const nm = String(nama).toUpperCase();
       roleRaw = nm.startsWith('LINE') ? 'admline' : 'admit';
     }
-    const role = roleRaw === 'admit' ? 'tech_admin' : roleRaw === 'admline' ? 'line_admin' : roleRaw;
+    const role = roleRaw === 'admit' || roleRaw === 'adminit' ? 'tech_admin' : roleRaw === 'admline' ? 'line_admin' : roleRaw;
     const password = (u.password ?? u.pass ?? '').trim();
     const rawLines = u.lines ?? u.line ?? '';
     let lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
@@ -74,7 +74,7 @@ async function getUserByIdAsync(id) {
       const nm = String(nama).toUpperCase();
       roleRaw = nm.startsWith('LINE') ? 'admline' : 'admit';
     }
-    const role = roleRaw === 'admit' ? 'tech_admin' : roleRaw === 'admline' ? 'line_admin' : roleRaw;
+    const role = roleRaw === 'admit' || roleRaw === 'adminit' ? 'tech_admin' : roleRaw === 'admline' ? 'line_admin' : roleRaw;
     const password = u.password ?? u.pass ?? '';
     const rawLines = u.lines ?? u.line ?? '';
     let lines = typeof rawLines === 'string' && rawLines ? String(rawLines).split(',').map(s => s.trim()).filter(Boolean) : Array.isArray(rawLines) ? rawLines : [];
@@ -120,7 +120,11 @@ function verifyToken(token, secret) {
   const parts = String(token).split('.'); if (parts.length !== 3) return null;
   const [header, body, sig] = parts;
   const expSig = crypto.createHmac('sha256', secret).update(`${header}.${body}`).digest('base64url');
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expSig))) return null;
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expSig))) return null;
+  } catch {
+    return null;
+  }
   try { return JSON.parse(Buffer.from(body, 'base64url').toString('utf-8')); } catch { return null; }
 }
 

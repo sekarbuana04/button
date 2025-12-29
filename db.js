@@ -9,7 +9,8 @@ const dbPath = path.join(dataDir, 'production.json');
 
 
 let state = { lines: {}, list: [], meta: {} };
-const DB_MYSQL = (process.env.DB_MYSQL || 'true').toLowerCase() === 'true';
+const DB_MYSQL = String(process.env.DB_MYSQL || '').toLowerCase() === 'true';
+const TRY_BUTTON_DB = Boolean(process.env.DB_HOST || process.env.DB_USER || process.env.DB_PASSWORD || process.env.DB_PASS || process.env.DB_PORT || process.env.BUTTON_DB_NAME);
 let pool = null;
 let poolButton = null;
 let BUTTON_DB_READY = false;
@@ -42,7 +43,7 @@ async function discoverMasterUsersSchema({ host, user, password, port }) {
 async function discoverMasterDataSchema({ host, user, password, port }) {
   try {
     const conn = await mysql.createConnection({ host, user, password, port });
-    const [rows] = await conn.query("SELECT TABLE_SCHEMA AS s, TABLE_NAME AS t FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN ('master_lines','master_line','kategori_mesin','kategori','jenis_mesin','merk_mesin','merk')");
+    const [rows] = await conn.query("SELECT TABLE_SCHEMA AS s, TABLE_NAME AS t FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME IN ('daftar_line','master_lines','master_line','kategori_mesin','kategori','jenis_mesin','merk_mesin','merk')");
     await conn.end();
     const map = {};
     for (const r of rows) {
@@ -78,39 +79,28 @@ async function initButtonDB() {
   if (poolButton) return;
   const host = process.env.DB_HOST || '127.0.0.1';
   const port = Number(process.env.DB_PORT || 3306);
-  let user = process.env.DB_USER || '';
-  let password = process.env.DB_PASSWORD || process.env.DB_PASS || '';
+  const user = (process.env.DB_USER && String(process.env.DB_USER).trim()) ? String(process.env.DB_USER).trim() : '';
+  const password = process.env.DB_PASSWORD || process.env.DB_PASS || '';
   let dbName = process.env.BUTTON_DB_NAME || 'button_db';
-  let cred = { user, password };
-  const candidates = [
-    { user, password },
-    { user: 'root', password: '' },
-    { user: 'root', password: 'root' },
-    { user: 'mysql', password: '' },
-    { user: 'admin', password: '' }
-  ];
-  let connected = false;
-  for (const c of candidates) {
-    try {
-      const conn = await mysql.createConnection({ host, user: c.user, password: c.password, port });
-      if (!process.env.BUTTON_DB_NAME) {
-        const foundMaster = await discoverMasterDataSchema({ host, user: c.user, password: c.password, port });
-        const foundUser = await discoverMasterUsersSchema({ host, user: c.user, password: c.password, port });
-        const chosen = foundMaster || foundUser;
-        if (chosen) dbName = chosen;
-      }
-      await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
-      await conn.end();
-      cred = c;
-      connected = true;
-      break;
-    } catch {}
+  if (!user) { BUTTON_DB_READY = false; return; }
+  try {
+    const conn = await mysql.createConnection({ host, user, password, port });
+    if (!process.env.BUTTON_DB_NAME) {
+      const foundMaster = await discoverMasterDataSchema({ host, user, password, port });
+      const foundUser = await discoverMasterUsersSchema({ host, user, password, port });
+      const chosen = foundMaster || foundUser;
+      if (chosen) dbName = chosen;
+    }
+    await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``);
+    await conn.end();
+  } catch {
+    BUTTON_DB_READY = false;
+    return;
   }
-  if (!connected) { BUTTON_DB_READY = false; return; }
   poolButton = await mysql.createPool({
     host,
-    user: cred.user,
-    password: cred.password,
+    user,
+    password,
     port,
     database: dbName,
     waitForConnections: true,
@@ -132,46 +122,9 @@ async function initButtonDB() {
 
 async function initIotDB() {
   if (poolIot) return;
-  const host = process.env.DB_HOST || '127.0.0.1';
-  const port = Number(process.env.DB_PORT || 3306);
-  let user = process.env.DB_USER || '';
-  let password = process.env.DB_PASSWORD || process.env.DB_PASS || '';
-  const dbName = process.env.DB_NAME || process.env.IOT_DB_NAME || 'iot_system';
-  const candidates = [
-    { user, password },
-    { user: 'root', password: '' },
-    { user: 'root', password: 'root' },
-    { user: 'mysql', password: '' },
-    { user: 'admin', password: '' }
-  ];
-  let cred = null;
-  for (const c of candidates) {
-    try {
-      const conn = await mysql.createConnection({ host, user: c.user, password: c.password, port });
-      await conn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-      await conn.end();
-      cred = c;
-      break;
-    } catch {}
-  }
-  if (!cred) { IOT_DB_READY = false; return; }
-  poolIot = await mysql.createPool({
-    host,
-    user: cred.user,
-    password: cred.password,
-    port,
-    database: dbName,
-    waitForConnections: true,
-    connectionLimit: 10
-  });
-  try {
-    await poolIot.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
-    await poolIot.query("SET collation_connection = 'utf8mb4_unicode_ci'");
-    const [rows] = await poolIot.query('SELECT 1 AS ok');
-    IOT_DB_READY = Array.isArray(rows);
-  } catch {
-    IOT_DB_READY = false;
-  }
+  await initButtonDB();
+  poolIot = poolButton;
+  IOT_DB_READY = Boolean(BUTTON_DB_READY && poolIot);
 }
 
 async function ensureButtonSchema() {
@@ -197,8 +150,31 @@ async function ensureButtonSchema() {
 
 async function ensureButtonMasterSchema() {
   await initButtonDB();
+  const poolConn = poolButton;
   try {
-    await poolButton.execute(
+    const hasDaftar = await tableExists(poolConn, 'daftar_line');
+    const hasMasterLines = await tableExists(poolConn, 'master_lines');
+    if (!hasDaftar && hasMasterLines) {
+      try { await poolConn.execute('RENAME TABLE `master_lines` TO `daftar_line`'); } catch {}
+    }
+    if (hasDaftar && hasMasterLines) {
+      let merged = false;
+      try {
+        await poolConn.execute(
+          'INSERT INTO daftar_line (id_line, nama_line) ' +
+          'SELECT ml.id_line, ml.nama_line FROM master_lines ml ' +
+          'LEFT JOIN daftar_line dl ON dl.id_line = ml.id_line ' +
+          'WHERE dl.id_line IS NULL'
+        );
+        merged = true;
+      } catch {}
+      if (merged) {
+        try { await dropTableWithFk(poolConn, 'master_lines'); } catch {}
+      }
+    }
+  } catch {}
+  try {
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS jenis_mesin (\n' +
       '  id_jnsmesin INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  name VARCHAR(128)\n' +
@@ -206,7 +182,7 @@ async function ensureButtonMasterSchema() {
     );
   } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS merk_mesin (\n' +
       '  id_merk INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  name VARCHAR(128),\n' +
@@ -216,15 +192,15 @@ async function ensureButtonMasterSchema() {
     );
   } catch {}
   try {
-    await poolButton.execute(
-      'CREATE TABLE IF NOT EXISTS master_lines (\n' +
+    await poolConn.execute(
+      'CREATE TABLE IF NOT EXISTS daftar_line (\n' +
       '  id_line INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  nama_line VARCHAR(128)\n' +
       ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
   } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS master_orders (\n' +
       '  id_line INT PRIMARY KEY,\n' +
       '  category VARCHAR(32),\n' +
@@ -232,12 +208,32 @@ async function ensureButtonMasterSchema() {
       '  total_processes INT NOT NULL DEFAULT 0,\n' +
       '  total_machines INT NOT NULL DEFAULT 0,\n' +
       '  updated_at DATETIME NULL,\n' +
-      '  CONSTRAINT fk_mo_line FOREIGN KEY (id_line) REFERENCES master_lines(id_line)\n' +
+      '  CONSTRAINT fk_mo_line FOREIGN KEY (id_line) REFERENCES daftar_line(id_line)\n' +
       ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
   } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
+      'CREATE TABLE IF NOT EXISTS master_order_list (\n' +
+      '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  orc VARCHAR(128) NOT NULL,\n' +
+      '  po VARCHAR(128) NOT NULL,\n' +
+      '  buyer VARCHAR(128) NULL,\n' +
+      '  style VARCHAR(128) NOT NULL,\n' +
+      '  color VARCHAR(64) NULL,\n' +
+      '  qty INT NOT NULL DEFAULT 0,\n' +
+      '  shipment_date DATE NULL,\n' +
+      '  description VARCHAR(255) NULL,\n' +
+      '  created_at DATETIME NULL,\n' +
+      '  updated_at DATETIME NULL,\n' +
+      '  UNIQUE KEY uniq_orc (orc),\n' +
+      '  KEY idx_po (po),\n' +
+      '  KEY idx_style (style)\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
+  try {
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS machine_tx (\n' +
       '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  line VARCHAR(128) NOT NULL,\n' +
@@ -250,7 +246,7 @@ async function ensureButtonMasterSchema() {
     );
   } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS style_order (\n' +
       '  id_style INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  id_jenis_pakaian INT NULL,\n' +
@@ -260,7 +256,7 @@ async function ensureButtonMasterSchema() {
     );
   } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS master_styles (\n' +
       '  id_style INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  id_line INT NULL,\n' +
@@ -271,7 +267,7 @@ async function ensureButtonMasterSchema() {
     );
   } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS style_proses (\n' +
       '  id_proses INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  id_style INT,\n' +
@@ -280,7 +276,7 @@ async function ensureButtonMasterSchema() {
     );
   } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS master_mesin (\n' +
       '  id_mesin INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  id_merk INT NULL,\n' +
@@ -289,9 +285,9 @@ async function ensureButtonMasterSchema() {
       ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
   } catch {}
-  try { await poolButton.execute('ALTER TABLE style_order MODIFY id_jenis_pakaian INT NULL DEFAULT NULL'); } catch {}
+  try { await poolConn.execute('ALTER TABLE style_order MODIFY id_jenis_pakaian INT NULL DEFAULT NULL'); } catch {}
   try {
-    await poolButton.execute(
+    await poolConn.execute(
       'CREATE TABLE IF NOT EXISTS proses_produksi (\n' +
       '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
       '  nama VARCHAR(128) UNIQUE\n' +
@@ -299,15 +295,27 @@ async function ensureButtonMasterSchema() {
     );
   } catch {}
   try {
-    await poolButton.execute(
-      'CREATE TABLE IF NOT EXISTS master_colors (\n' +
+    await poolConn.execute(
+      'CREATE TABLE IF NOT EXISTS jenis_pakaian (\n' +
       '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
-      '  color VARCHAR(32) NOT NULL UNIQUE\n' +
+      '  nama VARCHAR(128) NOT NULL,\n' +
+      '  UNIQUE KEY uniq_jenis_pakaian_nama (nama)\n' +
       ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
     );
   } catch {}
   try {
-    const poolConn = poolButton;
+    await poolConn.execute(
+      'CREATE TABLE IF NOT EXISTS alur_jahit (\n' +
+      '  id INT AUTO_INCREMENT PRIMARY KEY,\n' +
+      '  jenis_id INT NOT NULL,\n' +
+      '  proses_id INT NOT NULL,\n' +
+      '  position INT NOT NULL DEFAULT 0,\n' +
+      '  KEY idx_alur_jenis (jenis_id),\n' +
+      '  KEY idx_alur_proses (proses_id)\n' +
+      ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch {}
+  try {
     const existsKategori = await tableExists(poolConn, 'kategori');
     if (existsKategori) await dropTableWithFk(poolConn, 'kategori');
     const existsSpm = await tableExists(poolConn, 'style_proses_mesin');
@@ -327,8 +335,7 @@ async function loadFromMySQL() {
   for (const name of names) {
     let styleName = null;
     try {
-      const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [name]);
-      const lineId = Array.isArray(r1) && r1[0] ? r1[0].id_line : null;
+      const lineId = await resolveLineIdByName(name);
       if (lineId != null) {
         const [so] = await poolButton.query('SELECT style_nama FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
         styleName = Array.isArray(so) && so[0] ? (so[0].style_nama || null) : null;
@@ -348,11 +355,13 @@ async function loadFromMySQL() {
 }
 
 async function getStateLive() {
-  if (!DB_MYSQL) {
-    await refreshLinesFromMaster();
-  } else {
-    await loadFromMySQL();
+  if (DB_MYSQL) {
+    try {
+      await loadFromMySQL();
+      return state;
+    } catch {}
   }
+  try { await refreshLinesFromMaster(); } catch {}
   return state;
 }
 
@@ -386,8 +395,7 @@ async function getLineLive(line) {
 async function getLineStyleLive(line) {
   try {
     await ensureButtonMasterSchema();
-    const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
-    const lineId = Array.isArray(r1) && r1[0] ? r1[0].id_line : null;
+    const lineId = await resolveLineIdByName(line);
     if (lineId != null) {
       const [so] = await poolButton.query('SELECT style_nama FROM master_styles WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [lineId]);
       return (Array.isArray(so) && so[0]) ? (so[0].style_nama || null) : null;
@@ -480,6 +488,23 @@ async function getProsesProduksi() {
   }
 }
 
+async function createProsesProduksi({ nama }) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) return { id: Date.now(), nama };
+  const n = String(nama || '').trim();
+  if (!n) return { id: null, nama: '' };
+  try {
+    const [ins] = await poolButton.execute('INSERT INTO proses_produksi (nama) VALUES (?)', [n]);
+    return { id: ins && ins.insertId != null ? ins.insertId : null, nama: n };
+  } catch {
+    try {
+      const [rows] = await poolButton.query('SELECT id, nama FROM proses_produksi WHERE nama = ? LIMIT 1', [n]);
+      if (Array.isArray(rows) && rows.length) return { id: rows[0].id, nama: rows[0].nama };
+    } catch {}
+    return { id: null, nama: n };
+  }
+}
+
 async function updateProsesProduksi(id, { nama }) {
   await ensureButtonMasterSchema();
   if (!BUTTON_DB_READY) return { ok: true };
@@ -499,11 +524,89 @@ async function deleteProsesProduksi(id) {
   return { ok: true };
 }
 
+async function getJenisPakaian() {
+  await ensureButtonMasterSchema();
+  try {
+    const [rows] = await poolButton.query('SELECT id, nama FROM jenis_pakaian ORDER BY id ASC');
+    return (Array.isArray(rows) ? rows : []).map(r => ({ id: r.id, nama: r.nama }));
+  } catch {
+    return [];
+  }
+}
+
+async function createJenisPakaian({ nama }) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) return { id: Date.now(), nama };
+  const n = String(nama || '').trim();
+  if (!n) return { id: null, nama: '' };
+  try {
+    const [ins] = await poolButton.execute('INSERT INTO jenis_pakaian (nama) VALUES (?)', [n]);
+    return { id: ins && ins.insertId != null ? ins.insertId : null, nama: n };
+  } catch {
+    try {
+      const [rows] = await poolButton.query('SELECT id, nama FROM jenis_pakaian WHERE nama = ? LIMIT 1', [n]);
+      if (Array.isArray(rows) && rows.length) return { id: rows[0].id, nama: rows[0].nama };
+    } catch {}
+    return { id: null, nama: n };
+  }
+}
+
+async function updateJenisPakaian(id, { nama }) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) return { ok: true };
+  const n = String(nama || '').trim();
+  if (!n) return { ok: false };
+  try {
+    await poolButton.execute('UPDATE jenis_pakaian SET nama = ? WHERE id = ?', [n, id]);
+  } catch {}
+  return { ok: true };
+}
+
+async function deleteJenisPakaian(id) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) return { ok: true };
+  try { await poolButton.execute('DELETE FROM alur_jahit WHERE jenis_id = ?', [id]); } catch {}
+  try { await poolButton.execute('UPDATE style_order SET id_jenis_pakaian = NULL WHERE id_jenis_pakaian = ?', [id]); } catch {}
+  try { await poolButton.execute('DELETE FROM jenis_pakaian WHERE id = ?', [id]); } catch {}
+  return { ok: true };
+}
+
+async function getAlurJahitByJenisId(jenisId) {
+  await ensureButtonMasterSchema();
+  try {
+    const [rows] = await poolButton.query(
+      'SELECT aj.proses_id, pp.nama AS proses_nama, aj.position ' +
+      'FROM alur_jahit aj LEFT JOIN proses_produksi pp ON pp.id = aj.proses_id ' +
+      'WHERE aj.jenis_id = ? ORDER BY aj.position ASC, aj.id ASC',
+      [jenisId]
+    );
+    return (Array.isArray(rows) ? rows : []).map(r => ({ proses_id: r.proses_id, proses_nama: r.proses_nama || '' }));
+  } catch {
+    return [];
+  }
+}
+
+async function setAlurJahitByJenisId(jenisId, prosesIds) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) return { ok: true };
+  const jenis = Number(jenisId);
+  if (!Number.isFinite(jenis)) return { ok: false };
+  const ids = (Array.isArray(prosesIds) ? prosesIds : [])
+    .map(x => Number(x))
+    .filter(x => Number.isFinite(x));
+  try { await poolButton.execute('DELETE FROM alur_jahit WHERE jenis_id = ?', [jenis]); } catch {}
+  let pos = 0;
+  for (const pid of ids) {
+    try { await poolButton.execute('INSERT INTO alur_jahit (jenis_id, proses_id, position) VALUES (?,?,?)', [jenis, pid, pos++]); } catch {}
+  }
+  return { ok: true };
+}
+
 async function getMasterLine() {
   await ensureButtonMasterSchema();
   if (!BUTTON_DB_READY) { return []; }
   try {
-    const [rows] = await poolButton.query('SELECT id_line, nama_line FROM master_lines');
+    const [rows] = await poolButton.query('SELECT id_line, nama_line FROM daftar_line');
     return rows.map(r => ({ id_line: r.id_line, nama_line: r.nama_line }));
   } catch {}
   return [];
@@ -514,15 +617,15 @@ async function resolveLineIdByName(name) {
   const q = String(name || '').trim();
   if (!q) return null;
   try {
-    const [r1] = await poolButton.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [q]);
+    const [r1] = await poolButton.query('SELECT id_line FROM daftar_line WHERE nama_line = ? LIMIT 1', [q]);
     if (Array.isArray(r1) && r1.length) return r1[0].id_line;
   } catch {}
   try {
-    const [r3] = await poolButton.query('SELECT id_line FROM master_lines WHERE UPPER(nama_line) = UPPER(?) LIMIT 1', [q]);
+    const [r3] = await poolButton.query('SELECT id_line FROM daftar_line WHERE UPPER(nama_line) = UPPER(?) LIMIT 1', [q]);
     if (Array.isArray(r3) && r3.length) return r3[0].id_line;
   } catch {}
   try {
-    const [r4] = await poolButton.query('SELECT id_line FROM master_lines WHERE REPLACE(UPPER(nama_line), " ", "") = REPLACE(UPPER(?), " ", "") LIMIT 1', [q]);
+    const [r4] = await poolButton.query('SELECT id_line FROM daftar_line WHERE REPLACE(UPPER(nama_line), " ", "") = REPLACE(UPPER(?), " ", "") LIMIT 1', [q]);
     if (Array.isArray(r4) && r4.length) return r4[0].id_line;
   } catch {}
   return null;
@@ -533,7 +636,7 @@ async function createMasterLine({ nama_line }) {
   if (!BUTTON_DB_READY) return { id_line: Date.now(), nama_line };
   let res;
   try {
-    [res] = await poolButton.execute('INSERT INTO master_lines (nama_line) VALUES (?)', [nama_line]);
+    [res] = await poolButton.execute('INSERT INTO daftar_line (nama_line) VALUES (?)', [nama_line]);
   } catch {}
   return { id_line: res.insertId, nama_line };
 }
@@ -542,7 +645,7 @@ async function updateMasterLine(id, { nama_line }) {
   await ensureButtonMasterSchema();
   if (!BUTTON_DB_READY) return { ok: true };
   try {
-    await poolButton.execute('UPDATE master_lines SET nama_line = ? WHERE id_line = ?', [nama_line, id]);
+    await poolButton.execute('UPDATE daftar_line SET nama_line = ? WHERE id_line = ?', [nama_line, id]);
   } catch {}
   return { ok: true };
 }
@@ -551,7 +654,7 @@ async function deleteMasterLine(id) {
   await ensureButtonMasterSchema();
   if (!BUTTON_DB_READY) return { ok: true };
   try {
-    await poolButton.execute('DELETE FROM master_lines WHERE id_line = ?', [id]);
+    await poolButton.execute('DELETE FROM daftar_line WHERE id_line = ?', [id]);
   } catch {}
   return { ok: true };
 }
@@ -562,7 +665,7 @@ async function getMasterStyles() {
   try {
     const [rows] = await poolButton.query(
       'SELECT ms.id_style, ms.style_nama, ms.category, ms.id_line, ml.nama_line, ms.created_at ' +
-      'FROM master_styles ms LEFT JOIN master_lines ml ON ml.id_line = ms.id_line ' +
+      'FROM master_styles ms LEFT JOIN daftar_line ml ON ml.id_line = ms.id_line ' +
       'ORDER BY ms.id_style DESC'
     );
     return (Array.isArray(rows) ? rows : []).map(r => ({
@@ -573,9 +676,8 @@ async function getMasterStyles() {
       line: r.nama_line || null,
       created_at: r.created_at
     }));
-  } catch {
-    return [];
-  }
+  } catch {}
+  return [];
 }
 
 async function updateMasterStyle(id, { style_nama }) {
@@ -605,42 +707,163 @@ async function deleteMasterStyle(id) {
   return { ok: true };
 }
 
-async function getMasterColors() {
+function sanitizeOrcPart(v) {
+  return String(v || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 32);
+}
+
+function parseOrcSuffix(orc) {
+  const s = String(orc || '').trim();
+  const m = s.match(/-([A-Z])(\d{3})$/);
+  if (!m) return null;
+  return { letter: m[1], num: Number(m[2]) };
+}
+
+async function generateOrc({ po, buyer }) {
   await ensureButtonMasterSchema();
-  if (!BUTTON_DB_READY) { return []; }
+  const poPart = sanitizeOrcPart(po);
+  const buyerPart = sanitizeOrcPart(buyer) || 'NA';
+  const prefix = `${poPart}-${buyerPart}`;
+  if (!poPart) return null;
   try {
-    const [rows] = await poolButton.query('SELECT id, color FROM master_colors ORDER BY id ASC');
-    return (Array.isArray(rows) ? rows : []).map(r => ({ id: r.id, color: r.color }));
-  } catch { return []; }
+    const [rows] = await poolButton.query('SELECT orc FROM master_order_list WHERE orc LIKE ? ORDER BY id DESC LIMIT 2000', [`${prefix}-%`]);
+    const used = new Set(
+      (Array.isArray(rows) ? rows : [])
+        .map(r => parseOrcSuffix(r && r.orc))
+        .filter(Boolean)
+        .map(x => `${x.letter}${String(x.num).padStart(3, '0')}`)
+    );
+    for (let li = 0; li < 26; li++) {
+      const letter = String.fromCharCode(65 + li);
+      for (let n = 1; n <= 999; n++) {
+        const suf = `${letter}${String(n).padStart(3, '0')}`;
+        if (!used.has(suf)) return `${prefix}-${suf}`;
+      }
+    }
+  } catch {}
+  return `${prefix}-A001`;
 }
 
-async function createMasterColor({ color }) {
+async function listMasterOrderList({ q } = {}) {
   await ensureButtonMasterSchema();
-  const c = String(color || '').trim();
-  if (!c) return { id: null, color: '' };
-  const [res] = await poolButton.execute('INSERT INTO master_colors (color) VALUES (?)', [c]);
-  return { id: res.insertId, color: c };
+  if (!BUTTON_DB_READY) return [];
+  const query = String(q || '').trim();
+  try {
+    if (query) {
+      const like = `%${query}%`;
+      const [rows] = await poolButton.query(
+        'SELECT id, orc, po, style, color, qty, shipment_date, description ' +
+        'FROM master_order_list ' +
+        'WHERE orc LIKE ? OR po LIKE ? OR style LIKE ? OR color LIKE ? ' +
+        'ORDER BY id DESC LIMIT 500',
+        [like, like, like, like]
+      );
+      return Array.isArray(rows) ? rows : [];
+    }
+    const [rows] = await poolButton.query(
+      'SELECT id, orc, po, style, color, qty, shipment_date, description ' +
+      'FROM master_order_list ORDER BY id DESC LIMIT 500'
+    );
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
 }
 
-async function updateMasterColor(id, { color }) {
+async function createMasterOrderList({ po, buyer, style, color, qty, shipment_date, description }) {
   await ensureButtonMasterSchema();
-  const c = String(color || '').trim();
-  await poolButton.execute('UPDATE master_colors SET color = ? WHERE id = ?', [c || null, id]);
-  return { ok: true };
+  if (!BUTTON_DB_READY) return { ok: false };
+  const poVal = String(po || '').trim();
+  const buyerVal = String(buyer || '').trim();
+  const styleVal = String(style || '').trim();
+  const colorVal = String(color || '').trim();
+  const qtyVal = Number(qty || 0);
+  const shipVal = shipment_date ? String(shipment_date).slice(0, 10) : null;
+  const descVal = String(description || '').trim();
+  if (!poVal || !styleVal) return { ok: false };
+  const orc = await generateOrc({ po: poVal, buyer: buyerVal });
+  if (!orc) return { ok: false };
+  const now = toSqlDatetime(new Date().toISOString());
+  try {
+    const [ins] = await poolButton.execute(
+      'INSERT INTO master_order_list (orc, po, buyer, style, color, qty, shipment_date, description, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [orc, poVal, buyerVal || null, styleVal, colorVal || null, Number.isFinite(qtyVal) ? qtyVal : 0, shipVal || null, descVal || null, now, now]
+    );
+    return { ok: true, data: { id: ins && ins.insertId, orc, po: poVal, style: styleVal, color: colorVal || null, qty: Number.isFinite(qtyVal) ? qtyVal : 0, shipment_date: shipVal || null, description: descVal || null } };
+  } catch {
+    return { ok: false };
+  }
 }
 
-async function deleteMasterColor(id) {
+async function updateMasterOrderListByOrc(orc, { po, buyer, style, color, qty, shipment_date, description }) {
   await ensureButtonMasterSchema();
-  await poolButton.execute('DELETE FROM master_colors WHERE id = ?', [id]);
-  return { ok: true };
+  if (!BUTTON_DB_READY) return { ok: false };
+  const orcVal = String(orc || '').trim();
+  if (!orcVal) return { ok: false };
+
+  const poVal = String(po || '').trim();
+  const buyerVal = String(buyer || '').trim();
+  const styleVal = String(style || '').trim();
+  const colorVal = String(color || '').trim();
+  const qtyVal = Number(qty || 0);
+  const shipVal = shipment_date ? String(shipment_date).slice(0, 10) : null;
+  const descVal = String(description || '').trim();
+  if (!poVal || !styleVal) return { ok: false };
+
+  const now = toSqlDatetime(new Date().toISOString());
+  try {
+    await poolButton.execute(
+      'UPDATE master_order_list SET po = ?, buyer = ?, style = ?, color = ?, qty = ?, shipment_date = ?, description = ?, updated_at = ? WHERE orc = ? LIMIT 1',
+      [poVal, buyerVal || null, styleVal, colorVal || null, Number.isFinite(qtyVal) ? qtyVal : 0, shipVal || null, descVal || null, now, orcVal]
+    );
+    const [rows] = await poolButton.query(
+      'SELECT id, orc, po, style, color, qty, shipment_date, description FROM master_order_list WHERE orc = ? LIMIT 1',
+      [orcVal]
+    );
+    return { ok: true, data: (Array.isArray(rows) && rows[0]) ? rows[0] : null };
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function deleteMasterOrderListByOrc(orc) {
+  await ensureButtonMasterSchema();
+  if (!BUTTON_DB_READY) return { ok: false };
+  const v = String(orc || '').trim();
+  if (!v) return { ok: false };
+  try {
+    await poolButton.execute('DELETE FROM master_order_list WHERE orc = ? LIMIT 1', [v]);
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
 }
 
 function save() {
-  try { } catch {}
+  try {
+    const tmpPath = `${dbPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(state, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, dbPath);
+  } catch {}
 }
 
 function load() {
-  try { } catch {}
+  try {
+    if (!fs.existsSync(dbPath)) return;
+    const raw = fs.readFileSync(dbPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    state = {
+      lines: parsed.lines && typeof parsed.lines === 'object' ? parsed.lines : {},
+      list: Array.isArray(parsed.list) ? parsed.list : [],
+      meta: parsed.meta && typeof parsed.meta === 'object' ? parsed.meta : {},
+      iot: parsed.iot && typeof parsed.iot === 'object' ? parsed.iot : { receivers: [], summary: {}, logs: [], resets: [] }
+    };
+  } catch {}
 }
 
 function seedInitial() {
@@ -653,11 +876,13 @@ function seedInitial() {
       .catch(() => {});
     return;
   }
-  initButtonDB()
-    .then(() => ensureButtonMasterSchema())
-    .then(() => dropMachineTxAndTransmitters().catch(() => {}))
-    .then(refreshLinesFromMaster)
-    .catch(() => {});
+  if (TRY_BUTTON_DB) {
+    initButtonDB()
+      .then(() => ensureButtonMasterSchema())
+      .then(() => dropMachineTxAndTransmitters().catch(() => {}))
+      .then(refreshLinesFromMaster)
+      .catch(() => {});
+  }
 }
 
 function getState() {
@@ -784,9 +1009,9 @@ async function migrateLegacyTables() {
         const name = r.id;
         if (!name) continue;
         try {
-          const [ex] = await poolConn.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [name]);
+          const [ex] = await poolConn.query('SELECT id_line FROM daftar_line WHERE nama_line = ? LIMIT 1', [name]);
           if (!(Array.isArray(ex) && ex.length)) {
-            await poolConn.execute('INSERT INTO master_lines (nama_line) VALUES (?)', [name]);
+            await poolConn.execute('INSERT INTO daftar_line (nama_line) VALUES (?)', [name]);
           }
         } catch {}
       }
@@ -827,15 +1052,15 @@ async function migrateLegacyTables() {
   await dropTableWithFk(poolConn, 'lines');
   await dropTableWithFk(poolConn, 'merk');
   try {
-    // Merge master_line into master_lines if exists, then drop duplicate
+    // Merge master_line into daftar_line if exists, then drop duplicate
     if (await tableExists(poolConn, 'master_line')) {
       const [rows] = await poolConn.query('SELECT nama_line FROM master_line');
       for (const r of (Array.isArray(rows) ? rows : [])) {
         if (!r.nama_line) continue;
         try {
-          const [ex] = await poolConn.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [r.nama_line]);
+          const [ex] = await poolConn.query('SELECT id_line FROM daftar_line WHERE nama_line = ? LIMIT 1', [r.nama_line]);
           if (!(Array.isArray(ex) && ex.length)) {
-            await poolConn.execute('INSERT INTO master_lines (nama_line) VALUES (?)', [r.nama_line]);
+            await poolConn.execute('INSERT INTO daftar_line (nama_line) VALUES (?)', [r.nama_line]);
           }
         } catch {}
       }
@@ -875,15 +1100,16 @@ module.exports = { seedInitial, getState, getLines, getLine, getLineStyle, setLi
   refreshLinesFromMaster,
   getJenisMesinMaster, createJenisMesinMaster, updateJenisMesinMaster, deleteJenisMesinMaster,
   getMerkMaster, createMerkMaster, updateMerkMaster, deleteMerkMaster,
-  getProsesProduksi, updateProsesProduksi, deleteProsesProduksi,
+  getProsesProduksi, createProsesProduksi, updateProsesProduksi, deleteProsesProduksi,
+  getJenisPakaian, createJenisPakaian, updateJenisPakaian, deleteJenisPakaian,
+  getAlurJahitByJenisId, setAlurJahitByJenisId,
   getMasterLine, createMasterLine, updateMasterLine, deleteMasterLine,
   getMasterStyles, updateMasterStyle, deleteMasterStyle,
-  getMasterColors, createMasterColor, updateMasterColor, deleteMasterColor,
+  listMasterOrderList, createMasterOrderList, updateMasterOrderListByOrc, deleteMasterOrderListByOrc,
   saveStyleOrder, getStyleOrderByLine, addStyleProcess, deleteStyleProcess, renameStyleProcess, addProcessMachines, getMasterOrderSummary,
   deleteProcessMachines, deleteMasterOrderForLine, getMachineTxAssignments, assignMachineTx, unassignMachineTx,
   migrateLegacyTables,
   dropMachineTxAndTransmitters,
-  applyIotStage1,
   ensureIotSchema, rebuildIotSchema, installIotSeedAndProcedure,
   iotUpsertReceiver, iotUpdateReceiverLastSeen, iotUpsertSummary, iotHandleEvent, iotGetLogs, iotGetStatus, iotGetTransmitters, iotGetAvailableTransmitters,
   iotUnbindTransmitter,
@@ -954,8 +1180,11 @@ async function saveStyleOrder({ line, category, type, processes }) {
       let lineId = await resolveLineIdByName(line);
       if (lineId == null) {
         try {
-          const [insLine] = await poolButton.execute('INSERT INTO master_lines (nama_line) VALUES (?)', [String(line || '').trim()]);
-          lineId = insLine && insLine.insertId ? insLine.insertId : null;
+          const nmLine = String(line || '').trim();
+          if (nmLine) {
+            const created = await createMasterLine({ nama_line: nmLine });
+            lineId = created && created.id_line != null ? created.id_line : null;
+          }
         } catch { lineId = null; }
       }
       if (lineId != null) {
@@ -1065,8 +1294,11 @@ async function addStyleProcess({ line, name }) {
     await ensureButtonMasterSchema();
     let lineId = await resolveLineIdByName(line);
     if (lineId == null) {
-      const [insLine] = await poolButton.execute('INSERT INTO master_lines (nama_line) VALUES (?)', [String(line || '').trim()]);
-      lineId = insLine && insLine.insertId ? insLine.insertId : null;
+      const nmLine = String(line || '').trim();
+      if (nmLine) {
+        const created = await createMasterLine({ nama_line: nmLine });
+        lineId = created && created.id_line != null ? created.id_line : null;
+      }
     }
     if (lineId == null) return { ok: false };
     let styleId = null;
@@ -1250,8 +1482,7 @@ async function upsertMasterOrderForLine(line) {
     const poolConn = poolButton;
     const existsMo = await tableExists(poolConn, 'master_orders');
     if (!existsMo) return;
-    const [r1] = await poolConn.query('SELECT id_line FROM master_lines WHERE nama_line = ? LIMIT 1', [line]);
-    const lineId = Array.isArray(r1) && r1[0] ? r1[0].id_line : null;
+    const lineId = await resolveLineIdByName(line);
     if (lineId == null) return;
     let category = ''; let type = '';
     let styleId = null;
@@ -1290,7 +1521,8 @@ async function upsertMasterOrderForLine(line) {
 async function getMasterOrderSummary() {
   try {
     await ensureButtonMasterSchema();
-    const [linesRows] = await poolButton.query('SELECT id_line, nama_line FROM master_lines ORDER BY id_line ASC');
+    const rows = await getMasterLine();
+    const linesRows = (Array.isArray(rows) ? rows : []).slice().sort((a, b) => Number(a.id_line || 0) - Number(b.id_line || 0));
     const out = [];
     for (const lr of Array.isArray(linesRows) ? linesRows : []) {
       const line = lr.nama_line;
@@ -1368,7 +1600,7 @@ async function assignMachineTx({ line, machine, tx }) {
     await ensureButtonMasterSchema();
     await ensureIotSchema();
     const now = toSqlDatetime(new Date().toISOString());
-    const [exTx] = await poolIot.query('SELECT transmitter_id FROM transmitters WHERE transmitter_id = ? LIMIT 1', [tx]);
+    const [exTx] = await poolIot.query('SELECT transmitter_id FROM iot_transmitters WHERE transmitter_id = ? LIMIT 1', [tx]);
     const ok = Array.isArray(exTx) && exTx.length;
     if (!ok) return { ok: false, error: 'tx_not_found' };
     try {
@@ -1408,8 +1640,8 @@ async function unassignMachineTx({ line, machine }) {
 async function iotGetTransmitters() {
   try {
     await ensureIotSchema();
-    const [rows] = await poolIot.query('SELECT t.transmitter_id AS tx, r.mac_address AS mac_address FROM transmitters t LEFT JOIN receivers r ON r.receiver_id = t.receiver_id ORDER BY t.transmitter_id ASC');
-    const [sumRows] = await poolIot.query('SELECT tx, output, reject, output_total, reject_total FROM summary');
+    const [rows] = await poolIot.query('SELECT t.transmitter_id AS tx, r.mac_address AS mac_address FROM iot_transmitters t LEFT JOIN iot_receivers r ON r.receiver_id = t.receiver_id ORDER BY t.transmitter_id ASC');
+    const [sumRows] = await poolIot.query('SELECT tx, output, reject, output_total, reject_total FROM iot_summary');
     const sumMap = {};
     for (const s of Array.isArray(sumRows) ? sumRows : []) { sumMap[String(s.tx)] = s; }
     return (Array.isArray(rows) ? rows : []).map(r => {
@@ -1439,7 +1671,7 @@ async function iotUnbindTransmitter(tx) {
   const key = String(tx || '').trim();
   if (!key) return { ok: false };
   try {
-    await poolIot.execute('UPDATE transmitters SET receiver_id = NULL WHERE transmitter_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [key]);
+    await poolIot.execute('UPDATE iot_transmitters SET receiver_id = NULL WHERE transmitter_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [key]);
     return { ok: true };
   } catch {
     return { ok: false };
@@ -1452,7 +1684,7 @@ async function iotUpdateTransmitterName(tx, name) {
   const nm = String(name || '').trim();
   if (!IOT_DB_READY || !key) return { ok: false };
   try {
-    await poolIot.execute('UPDATE transmitters SET name = ? WHERE transmitter_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [nm || null, key]);
+    await poolIot.execute('UPDATE iot_transmitters SET name = ? WHERE transmitter_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [nm || null, key]);
     return { ok: true };
   } catch {
     return { ok: false };
@@ -1466,8 +1698,8 @@ async function iotDeleteTransmitter(tx) {
   const conn = await poolIot.getConnection();
   try {
     await conn.beginTransaction();
-    try { await conn.execute('DELETE FROM summary WHERE tx = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [key]); } catch {}
-    try { await conn.execute('DELETE FROM transmitters WHERE transmitter_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [key]); } catch {}
+    try { await conn.execute('DELETE FROM iot_summary WHERE tx = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [key]); } catch {}
+    try { await conn.execute('DELETE FROM iot_transmitters WHERE transmitter_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [key]); } catch {}
     await conn.commit();
   } catch (e) {
     try { await conn.rollback(); } catch {}
@@ -1482,40 +1714,6 @@ async function iotDeleteTransmitter(tx) {
   return { ok: true };
 }
 
-async function applyIotStage1(dbName) {
-  const host = process.env.DB_HOST || '127.0.0.1';
-  const port = Number(process.env.DB_PORT || 3306);
-  let user = process.env.DB_USER || '';
-  let password = process.env.DB_PASS || '';
-  const name = String(dbName || process.env.IOT_DB_NAME || 'button_db');
-  const candidates = [
-    { user, password },
-    { user: 'root', password: '' },
-    { user: 'root', password: 'root' },
-    { user: 'mysql', password: '' },
-    { user: 'admin', password: '' }
-  ];
-  for (const c of candidates) {
-    try {
-      const conn = await mysql.createConnection({ host, user: c.user, password: c.password, port });
-      await conn.query(`CREATE DATABASE IF NOT EXISTS \`${name}\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-      await conn.query(`USE \`${name}\``);
-      await conn.execute('CREATE TABLE IF NOT EXISTS receivers (receiver_id INT AUTO_INCREMENT PRIMARY KEY, mac_address VARCHAR(32) NOT NULL UNIQUE, name VARCHAR(128) NULL, auth_token VARCHAR(128) NULL, last_seen DATETIME(3) NULL, created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-      await conn.execute('CREATE TABLE IF NOT EXISTS transmitters (transmitter_id VARCHAR(64) PRIMARY KEY, name VARCHAR(128) NULL, receiver_id INT NULL, created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3), updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), CONSTRAINT fk_tx_rx FOREIGN KEY (receiver_id) REFERENCES receivers(receiver_id) ON UPDATE CASCADE ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-      await conn.execute('CREATE TABLE IF NOT EXISTS summary (tx VARCHAR(64) PRIMARY KEY, output INT NOT NULL DEFAULT 0, reject INT NOT NULL DEFAULT 0, output_total INT NOT NULL DEFAULT 0, reject_total INT NOT NULL DEFAULT 0, updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-      await conn.execute('CREATE TABLE IF NOT EXISTS logs (id BIGINT AUTO_INCREMENT PRIMARY KEY, rx INT NULL, tx VARCHAR(64) NULL, type VARCHAR(16) NOT NULL, value_output INT NULL, value_reject INT NULL, event_id VARCHAR(64) NULL UNIQUE, timestamp DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3), INDEX idx_logs_tx_ts (tx, timestamp), INDEX idx_logs_rx_ts (rx, timestamp), CONSTRAINT fk_logs_rx FOREIGN KEY (rx) REFERENCES receivers(receiver_id) ON UPDATE CASCADE ON DELETE SET NULL, CONSTRAINT fk_logs_tx FOREIGN KEY (tx) REFERENCES transmitters(transmitter_id) ON UPDATE CASCADE ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-      await conn.execute('CREATE TABLE IF NOT EXISTS resets (id BIGINT AUTO_INCREMENT PRIMARY KEY, tx VARCHAR(64) NULL, prev_output INT NOT NULL, prev_reject INT NOT NULL, timestamp DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3), INDEX idx_resets_tx_ts (tx, timestamp), CONSTRAINT fk_resets_tx FOREIGN KEY (tx) REFERENCES transmitters(transmitter_id) ON UPDATE CASCADE ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-      try {
-        await conn.execute("INSERT IGNORE INTO receivers (mac_address, name) VALUES ('A4:CF:12:34:56:01','Receiver 1'), ('A4:CF:12:34:56:02','Receiver 2')");
-        await conn.execute("INSERT IGNORE INTO transmitters (transmitter_id, name, receiver_id) VALUES ('TX01','Transmitter 01',(SELECT receiver_id FROM receivers WHERE mac_address='A4:CF:12:34:56:01')), ('TX02','Transmitter 02',(SELECT receiver_id FROM receivers WHERE mac_address='A4:CF:12:34:56:01'))");
-        await conn.execute("INSERT IGNORE INTO summary (tx, output, reject, output_total, reject_total) VALUES ('TX01',0,0,0,0),('TX02',0,0,0,0)");
-      } catch {}
-      await conn.end();
-      return { ok: true, database: name };
-    } catch {}
-  }
-  return { ok: false };
-}
 function ensureIotState() {
   state.iot = state.iot || { receivers: [], summary: {}, logs: [], resets: [], event_ids: [] };
 }
@@ -1564,7 +1762,7 @@ async function ensureIotSchema() {
   if (!IOT_DB_READY) return;
   const conn = poolIot;
   await conn.execute(
-    'CREATE TABLE IF NOT EXISTS receivers (' +
+    'CREATE TABLE IF NOT EXISTS iot_receivers (' +
     'receiver_id VARCHAR(16) PRIMARY KEY, ' +
     'mac_address VARCHAR(32) NULL, ' +
     'name VARCHAR(64) NULL, ' +
@@ -1575,7 +1773,7 @@ async function ensureIotSchema() {
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
   );
   await conn.execute(
-    'CREATE TABLE IF NOT EXISTS transmitters (' +
+    'CREATE TABLE IF NOT EXISTS iot_transmitters (' +
     'transmitter_id VARCHAR(64) PRIMARY KEY, ' +
     'name VARCHAR(128) NULL, ' +
     'receiver_id VARCHAR(16) NULL, ' +
@@ -1585,7 +1783,7 @@ async function ensureIotSchema() {
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
   );
   await conn.execute(
-    'CREATE TABLE IF NOT EXISTS summary (' +
+    'CREATE TABLE IF NOT EXISTS iot_summary (' +
     'tx VARCHAR(64) PRIMARY KEY, ' +
     'output INT NOT NULL DEFAULT 0, ' +
     'reject INT NOT NULL DEFAULT 0, ' +
@@ -1595,7 +1793,7 @@ async function ensureIotSchema() {
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
   );
   await conn.execute(
-    'CREATE TABLE IF NOT EXISTS logs (' +
+    'CREATE TABLE IF NOT EXISTS iot_logs (' +
     'id BIGINT AUTO_INCREMENT PRIMARY KEY, ' +
     'rx VARCHAR(16) NULL, ' +
     'tx VARCHAR(64) NULL, ' +
@@ -1609,7 +1807,7 @@ async function ensureIotSchema() {
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
   );
   await conn.execute(
-    'CREATE TABLE IF NOT EXISTS resets (' +
+    'CREATE TABLE IF NOT EXISTS iot_resets (' +
     'id BIGINT AUTO_INCREMENT PRIMARY KEY, ' +
     'tx VARCHAR(64) NOT NULL, ' +
     'prev_output INT NOT NULL, ' +
@@ -1619,11 +1817,11 @@ async function ensureIotSchema() {
     'INDEX idx_resets_tx_ts (tx, timestamp)' +
     ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
   );
-  try { await iotDropAllForeignKeys(conn, 'logs'); } catch {}
-  try { await iotDropAllForeignKeys(conn, 'resets'); } catch {}
-  try { await iotDropAllForeignKeys(conn, 'transmitters'); } catch {}
-  try { await iotDropAllForeignKeys(conn, 'receivers'); } catch {}
-  try { await iotEnsureColumn(conn, 'resets', 'start_time', 'DATETIME(3) NULL'); } catch {}
+  try { await iotDropAllForeignKeys(conn, 'iot_logs'); } catch {}
+  try { await iotDropAllForeignKeys(conn, 'iot_resets'); } catch {}
+  try { await iotDropAllForeignKeys(conn, 'iot_transmitters'); } catch {}
+  try { await iotDropAllForeignKeys(conn, 'iot_receivers'); } catch {}
+  try { await iotEnsureColumn(conn, 'iot_resets', 'start_time', 'DATETIME(3) NULL'); } catch {}
   if (!IOT_PROC_READY) {
     try { await ensureIotProcedure(); } catch {}
   }
@@ -1634,18 +1832,18 @@ async function rebuildIotSchema(customSql) {
   if (!IOT_DB_READY) return;
   const conn = poolIot;
   try {
-    await dropTableWithFk(conn, 'resets');
-    await dropTableWithFk(conn, 'logs');
-    await dropTableWithFk(conn, 'summary');
-    await dropTableWithFk(conn, 'transmitters');
-    await dropTableWithFk(conn, 'receivers');
+    await dropTableWithFk(conn, 'iot_resets');
+    await dropTableWithFk(conn, 'iot_logs');
+    await dropTableWithFk(conn, 'iot_summary');
+    await dropTableWithFk(conn, 'iot_transmitters');
+    await dropTableWithFk(conn, 'iot_receivers');
     const sql = (customSql != null && String(customSql).trim().length) ? String(customSql) : null;
     if (sql) {
       const stmts = sql.split(';').map(s => s.trim()).filter(Boolean);
       for (const q of stmts) { await conn.execute(q); }
     } else {
       await conn.execute(
-        'CREATE TABLE receivers (' +
+        'CREATE TABLE iot_receivers (' +
         'receiver_id VARCHAR(16) PRIMARY KEY, ' +
         'mac_address VARCHAR(32) NULL, ' +
         'name VARCHAR(64) NULL, ' +
@@ -1656,7 +1854,7 @@ async function rebuildIotSchema(customSql) {
         ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
       );
       await conn.execute(
-        'CREATE TABLE transmitters (' +
+        'CREATE TABLE iot_transmitters (' +
         'transmitter_id VARCHAR(64) PRIMARY KEY, ' +
         'name VARCHAR(128) NULL, ' +
         'receiver_id VARCHAR(16) NULL, ' +
@@ -1666,7 +1864,7 @@ async function rebuildIotSchema(customSql) {
         ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
       );
       await conn.execute(
-        'CREATE TABLE summary (' +
+        'CREATE TABLE iot_summary (' +
         'tx VARCHAR(64) PRIMARY KEY, ' +
         'output INT NOT NULL DEFAULT 0, ' +
         'reject INT NOT NULL DEFAULT 0, ' +
@@ -1676,7 +1874,7 @@ async function rebuildIotSchema(customSql) {
         ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
       );
       await conn.execute(
-        'CREATE TABLE logs (' +
+        'CREATE TABLE iot_logs (' +
         'id BIGINT AUTO_INCREMENT PRIMARY KEY, ' +
         'rx VARCHAR(16) NULL, ' +
         'tx VARCHAR(64) NULL, ' +
@@ -1690,7 +1888,7 @@ async function rebuildIotSchema(customSql) {
         ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
       );
       await conn.execute(
-        'CREATE TABLE resets (' +
+        'CREATE TABLE iot_resets (' +
         'id BIGINT AUTO_INCREMENT PRIMARY KEY, ' +
         'tx VARCHAR(64) NOT NULL, ' +
         'prev_output INT NOT NULL, ' +
@@ -1744,32 +1942,32 @@ async function ensureIotProcedure() {
       "  DECLARE v_dup INT DEFAULT 0; " +
       "  START TRANSACTION; " +
       "  IF p_event_id IS NOT NULL AND p_event_id <> '' THEN " +
-      "    SELECT COUNT(*) INTO v_dup FROM logs WHERE event_id = CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
+      "    SELECT COUNT(*) INTO v_dup FROM iot_logs WHERE event_id = CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
       "  END IF; " +
-      "  INSERT INTO summary (tx, output, reject, output_total, reject_total) VALUES (CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = tx; " +
-      "  INSERT INTO transmitters (transmitter_id, name, receiver_id) VALUES (CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, NULL, CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci) ON DUPLICATE KEY UPDATE receiver_id = VALUES(receiver_id); " +
+      "  INSERT INTO iot_summary (tx, output, reject, output_total, reject_total) VALUES (CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = tx; " +
+      "  INSERT INTO iot_transmitters (transmitter_id, name, receiver_id) VALUES (CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, NULL, CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci) ON DUPLICATE KEY UPDATE receiver_id = VALUES(receiver_id); " +
       "  IF v_dup = 0 THEN " +
       "    IF p_type = 'output' THEN " +
       "      IF p_value_output IS NULL THEN " +
-      "        UPDATE summary SET output = output + 1 WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
+      "        UPDATE iot_summary SET output = output + 1 WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
       "      ELSE " +
-      "        UPDATE summary SET output = GREATEST(output, p_value_output) WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
+      "        UPDATE iot_summary SET output = GREATEST(output, p_value_output) WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
       "      END IF; " +
-      "      INSERT INTO logs (rx, tx, type, value_output, event_id) VALUES (CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'output', p_value_output, CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci); " +
+      "      INSERT INTO iot_logs (rx, tx, type, value_output, event_id) VALUES (CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'output', p_value_output, CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci); " +
       "    ELSEIF p_type = 'reject' THEN " +
       "      IF p_value_reject IS NULL THEN " +
-      "        UPDATE summary SET reject = reject + 1 WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
+      "        UPDATE iot_summary SET reject = reject + 1 WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
       "      ELSE " +
-      "        UPDATE summary SET reject = GREATEST(reject, p_value_reject) WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
+      "        UPDATE iot_summary SET reject = GREATEST(reject, p_value_reject) WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
       "      END IF; " +
-      "      INSERT INTO logs (rx, tx, type, value_reject, event_id) VALUES (CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'reject', p_value_reject, CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci); " +
+      "      INSERT INTO iot_logs (rx, tx, type, value_reject, event_id) VALUES (CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'reject', p_value_reject, CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci); " +
       "    ELSEIF p_type = 'reset' THEN " +
-      "      SELECT output, reject INTO v_prev_output, v_prev_reject FROM summary WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci FOR UPDATE; " +
+      "      SELECT output, reject INTO v_prev_output, v_prev_reject FROM iot_summary WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci FOR UPDATE; " +
       "      SET v_out = GREATEST(IFNULL(v_prev_output,0), IFNULL(p_value_output,0)); " +
       "      SET v_rej = GREATEST(IFNULL(v_prev_reject,0), IFNULL(p_value_reject,0)); " +
-      "      INSERT INTO resets (tx, prev_output, prev_reject) VALUES (CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, v_out, v_rej); " +
-      "      INSERT INTO logs (rx, tx, type, value_output, value_reject, event_id) VALUES (CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'reset', v_out, v_rej, CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci); " +
-      "      UPDATE summary SET output_total = output_total + v_out, reject_total = reject_total + v_rej, output = 0, reject = 0 WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
+      "      INSERT INTO iot_resets (tx, prev_output, prev_reject) VALUES (CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, v_out, v_rej); " +
+      "      INSERT INTO iot_logs (rx, tx, type, value_output, value_reject, event_id) VALUES (CONVERT(p_rx USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'reset', v_out, v_rej, CONVERT(p_event_id USING utf8mb4) COLLATE utf8mb4_unicode_ci); " +
+      "      UPDATE iot_summary SET output_total = output_total + v_out, reject_total = reject_total + v_rej, output = 0, reject = 0 WHERE tx = CONVERT(p_tx USING utf8mb4) COLLATE utf8mb4_unicode_ci; " +
       "    END IF; " +
       "  END IF; " +
       "  COMMIT; " +
@@ -1794,15 +1992,15 @@ function mapReceiverIdFromTx(tx) {
 async function iotEnsureReceiverIdForMac(conn, mac) {
   const m = String(mac || '').trim();
   if (!m) return null;
-  const [rows] = await conn.query('SELECT receiver_id FROM receivers WHERE mac_address = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci LIMIT 1', [m]);
+  const [rows] = await conn.query('SELECT receiver_id FROM iot_receivers WHERE mac_address = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci LIMIT 1', [m]);
   const found = Array.isArray(rows) && rows[0] ? rows[0].receiver_id : null;
   if (found) return String(found);
-  const [usedRows] = await conn.query('SELECT receiver_id FROM receivers WHERE receiver_id IN ("RX01","RX02","RX03")');
+  const [usedRows] = await conn.query('SELECT receiver_id FROM iot_receivers WHERE receiver_id IN ("RX01","RX02","RX03")');
   const used = new Set((Array.isArray(usedRows) ? usedRows : []).map(r => String(r.receiver_id)));
   const candidates = ['RX01', 'RX02', 'RX03'];
   const pick = candidates.find(x => !used.has(x)) || 'RX01';
   await conn.execute(
-    'INSERT INTO receivers (receiver_id, mac_address, name, last_seen) VALUES (?, ?, NULL, NOW(3)) ' +
+    'INSERT INTO iot_receivers (receiver_id, mac_address, name, last_seen) VALUES (?, ?, NULL, NOW(3)) ' +
     'ON DUPLICATE KEY UPDATE mac_address = VALUES(mac_address), last_seen = NOW(3)',
     [pick, m]
   );
@@ -1819,12 +2017,12 @@ async function iotUpsertReceiver(mac, name) {
       const rxId = await iotEnsureReceiverIdForMac(conn, m);
       if (name != null) {
         await conn.execute(
-          'UPDATE receivers SET name = ? WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci',
+          'UPDATE iot_receivers SET name = ? WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci',
           [String(name), rxId]
         );
       }
       const [rows] = await conn.query(
-        'SELECT receiver_id, mac_address, name, last_seen FROM receivers WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci LIMIT 1',
+        'SELECT receiver_id, mac_address, name, last_seen FROM iot_receivers WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci LIMIT 1',
         [rxId]
       );
       return Array.isArray(rows) && rows[0] ? rows[0] : { receiver_id: rxId, mac_address: m, name: name || null, last_seen: null };
@@ -1850,11 +2048,11 @@ async function iotUpdateReceiverLastSeen(mac) {
     try {
       const rxId = await iotEnsureReceiverIdForMac(conn, m);
       await conn.execute(
-        'UPDATE receivers SET last_seen = NOW(3) WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci',
+        'UPDATE iot_receivers SET last_seen = NOW(3) WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci',
         [rxId]
       );
       const [rows] = await conn.query(
-        'SELECT receiver_id, mac_address, name, last_seen FROM receivers WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci LIMIT 1',
+        'SELECT receiver_id, mac_address, name, last_seen FROM iot_receivers WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci LIMIT 1',
         [rxId]
       );
       return Array.isArray(rows) && rows[0] ? rows[0] : { receiver_id: rxId, mac_address: m, name: null, last_seen: new Date().toISOString().slice(0, 19).replace('T', ' ') };
@@ -1883,7 +2081,7 @@ async function iotUpdateReceiverName(mac, name) {
     try {
       const rxId = await iotEnsureReceiverIdForMac(conn, m);
       await conn.execute(
-        'UPDATE receivers SET name = ? WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci',
+        'UPDATE iot_receivers SET name = ? WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci',
         [nm || null, rxId]
       );
     } finally {
@@ -1905,7 +2103,7 @@ async function iotDeleteReceiver(mac) {
   const m = String(mac || '').trim();
   if (!m) return { ok: false };
   if (IOT_DB_READY) {
-    try { await poolIot.execute('DELETE FROM receivers WHERE mac_address = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [m]); } catch {}
+    try { await poolIot.execute('DELETE FROM iot_receivers WHERE mac_address = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [m]); } catch {}
     return { ok: true };
   } else {
     const idx = state.iot.receivers.findIndex(r => String(r.mac_address) === String(m));
@@ -1919,8 +2117,8 @@ async function iotUpsertSummary(tx, receiver_mac) {
   await ensureIotSchema();
   const key = String(tx || '').trim();
   if (IOT_DB_READY) {
-    await poolIot.execute('INSERT INTO summary (tx, output, reject, output_total, reject_total) VALUES (?, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = VALUES(tx)', [key]);
-    const [rows] = await poolIot.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [key]);
+    await poolIot.execute('INSERT INTO iot_summary (tx, output, reject, output_total, reject_total) VALUES (?, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = VALUES(tx)', [key]);
+    const [rows] = await poolIot.query('SELECT tx, output, reject, output_total, reject_total FROM iot_summary WHERE tx = ? LIMIT 1', [key]);
     const cur = Array.isArray(rows) && rows[0] ? rows[0] : { tx: key, output: 0, reject: 0, output_total: 0, reject_total: 0 };
     return cur;
   } else {
@@ -1949,27 +2147,27 @@ async function iotHandleEvent(tx, receiver_mac, type, payload) {
         try { rxId = await iotEnsureReceiverIdForMac(conn, m); } catch {}
       }
       if (!rxId) rxId = mapReceiverIdFromTx(t);
-      try { await conn.execute('UPDATE receivers SET last_seen = NOW(3) WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [rxId]); } catch {}
-      try { await conn.execute('INSERT INTO transmitters (transmitter_id, name, receiver_id) VALUES (?, NULL, ?) ON DUPLICATE KEY UPDATE receiver_id = COALESCE(VALUES(receiver_id), receiver_id)', [t, rxId]); } catch {}
-      await conn.execute('INSERT INTO summary (tx, output, reject, output_total, reject_total) VALUES (?, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = VALUES(tx)', [t]);
+      try { await conn.execute('UPDATE iot_receivers SET last_seen = NOW(3) WHERE receiver_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci', [rxId]); } catch {}
+      try { await conn.execute('INSERT INTO iot_transmitters (transmitter_id, name, receiver_id) VALUES (?, NULL, ?) ON DUPLICATE KEY UPDATE receiver_id = COALESCE(VALUES(receiver_id), receiver_id)', [t, rxId]); } catch {}
+      await conn.execute('INSERT INTO iot_summary (tx, output, reject, output_total, reject_total) VALUES (?, 0, 0, 0, 0) ON DUPLICATE KEY UPDATE tx = VALUES(tx)', [t]);
 
       if (eid) {
         try {
-          const [dup] = await conn.query('SELECT id FROM logs WHERE event_id = ? LIMIT 1', [eid]);
+          const [dup] = await conn.query('SELECT id FROM iot_logs WHERE event_id = ? LIMIT 1', [eid]);
           if (Array.isArray(dup) && dup[0]) {
             await conn.commit();
-            const [rows] = await conn.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [t]);
+            const [rows] = await conn.query('SELECT tx, output, reject, output_total, reject_total FROM iot_summary WHERE tx = ? LIMIT 1', [t]);
             return Array.isArray(rows) && rows[0] ? rows[0] : { tx: t, output: 0, reject: 0, output_total: 0, reject_total: 0 };
           }
         } catch {}
       }
 
       if (type === 'output') {
-        await conn.execute('UPDATE summary SET output = output + 1, output_total = output_total + 1 WHERE tx = ?', [t]);
-        try { await conn.execute('INSERT INTO logs (rx, tx, type, event_id) VALUES (?, ?, ?, ?)', [rxId, t, 'output', eid]); } catch {}
+        await conn.execute('UPDATE iot_summary SET output = output + 1, output_total = output_total + 1 WHERE tx = ?', [t]);
+        try { await conn.execute('INSERT INTO iot_logs (rx, tx, type, event_id) VALUES (?, ?, ?, ?)', [rxId, t, 'output', eid]); } catch {}
       } else if (type === 'reject') {
-        await conn.execute('UPDATE summary SET reject = reject + 1, reject_total = reject_total + 1 WHERE tx = ?', [t]);
-        try { await conn.execute('INSERT INTO logs (rx, tx, type, event_id) VALUES (?, ?, ?, ?)', [rxId, t, 'reject', eid]); } catch {}
+        await conn.execute('UPDATE iot_summary SET reject = reject + 1, reject_total = reject_total + 1 WHERE tx = ?', [t]);
+        try { await conn.execute('INSERT INTO iot_logs (rx, tx, type, event_id) VALUES (?, ?, ?, ?)', [rxId, t, 'reject', eid]); } catch {}
       } else if (type === 'reset') {
         const snapOut = (p.output != null ? Number(p.output) : (p.value_output != null ? Number(p.value_output) : null));
         const snapRej = (p.reject != null ? Number(p.reject) : (p.value_reject != null ? Number(p.value_reject) : null));
@@ -1979,18 +2177,18 @@ async function iotHandleEvent(tx, receiver_mac, type, payload) {
           prevOut = Number.isFinite(snapOut) ? snapOut : 0;
           prevRej = Number.isFinite(snapRej) ? snapRej : 0;
         } else {
-          const [sumRows] = await conn.query('SELECT output, reject FROM summary WHERE tx = ? LIMIT 1 FOR UPDATE', [t]);
+          const [sumRows] = await conn.query('SELECT output, reject FROM iot_summary WHERE tx = ? LIMIT 1 FOR UPDATE', [t]);
           const cur = Array.isArray(sumRows) && sumRows[0] ? sumRows[0] : { output: 0, reject: 0 };
           prevOut = Number(cur.output || 0) || 0;
           prevRej = Number(cur.reject || 0) || 0;
         }
-        try { await conn.execute('INSERT INTO resets (tx, prev_output, prev_reject, start_time) VALUES (?, ?, ?, NULL)', [t, prevOut, prevRej]); }
-        catch { try { await conn.execute('INSERT INTO resets (tx, prev_output, prev_reject) VALUES (?, ?, ?)', [t, prevOut, prevRej]); } catch {} }
-        try { await conn.execute('INSERT INTO logs (rx, tx, type, value_output, value_reject, event_id) VALUES (?, ?, ?, ?, ?, ?)', [rxId, t, 'reset', prevOut, prevRej, eid]); } catch {}
-        await conn.execute('UPDATE summary SET output = 0, reject = 0 WHERE tx = ?', [t]);
+        try { await conn.execute('INSERT INTO iot_resets (tx, prev_output, prev_reject, start_time) VALUES (?, ?, ?, NULL)', [t, prevOut, prevRej]); }
+        catch { try { await conn.execute('INSERT INTO iot_resets (tx, prev_output, prev_reject) VALUES (?, ?, ?)', [t, prevOut, prevRej]); } catch {} }
+        try { await conn.execute('INSERT INTO iot_logs (rx, tx, type, value_output, value_reject, event_id) VALUES (?, ?, ?, ?, ?, ?)', [rxId, t, 'reset', prevOut, prevRej, eid]); } catch {}
+        await conn.execute('UPDATE iot_summary SET output = 0, reject = 0 WHERE tx = ?', [t]);
       }
       await conn.commit();
-      const [rows] = await conn.query('SELECT tx, output, reject, output_total, reject_total FROM summary WHERE tx = ? LIMIT 1', [t]);
+      const [rows] = await conn.query('SELECT tx, output, reject, output_total, reject_total FROM iot_summary WHERE tx = ? LIMIT 1', [t]);
       return Array.isArray(rows) && rows[0] ? rows[0] : { tx: t, output: 0, reject: 0, output_total: 0, reject_total: 0 };
     } catch (e) {
       try { await conn.rollback(); } catch {}
@@ -2047,7 +2245,7 @@ async function iotGetLogs(limit = 200) {
   if (IOT_DB_READY) {
     const [rows] = await poolIot.query(
       'SELECT l.id, COALESCE(r.mac_address, l.rx) AS rx, l.tx, l.type, l.value_output, l.value_reject, l.timestamp ' +
-      'FROM logs l LEFT JOIN receivers r ON r.receiver_id = l.rx ' +
+      'FROM iot_logs l LEFT JOIN iot_receivers r ON r.receiver_id = l.rx ' +
       'ORDER BY l.timestamp DESC LIMIT ?',
       [n]
     );
@@ -2065,8 +2263,8 @@ async function iotGetStatus(thresholdMs = 10000) {
   if (IOT_DB_READY) {
     const [rows] = await poolIot.query(
       'SELECT r.mac_address, r.name, r.last_seen, ' +
-      '  (SELECT MAX(l.timestamp) FROM logs l WHERE l.rx = r.receiver_id) AS last_event ' +
-      'FROM receivers r WHERE r.mac_address IS NOT NULL AND r.mac_address <> "" ' +
+      '  (SELECT MAX(l.timestamp) FROM iot_logs l WHERE l.rx = r.receiver_id) AS last_event ' +
+      'FROM iot_receivers r WHERE r.mac_address IS NOT NULL AND r.mac_address <> "" ' +
       'ORDER BY COALESCE(last_event, r.last_seen) DESC'
     );
     const now = Date.now();

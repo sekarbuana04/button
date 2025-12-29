@@ -125,12 +125,59 @@ function updateGrid(machines) {
   });
 }
 
-function labelsFor(machines) {
-  return machines.map(m => String(m.job || '').trim());
-}
+function chartStacksFor(machines) {
+  const groups = new Map();
+  for (const m of machines) {
+    const label = String(m.job || m.machine || '').trim() || '—';
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push({
+      good: Number(m.good) || 0,
+      reject: Number(m.reject) || 0
+    });
+  }
 
-function valuesFor(machines, key) {
-  return machines.map(m => m[key]);
+  const MAX_STACKS_PER_PROSES = 8;
+  for (const [label, arr] of groups.entries()) {
+    if (!Array.isArray(arr) || arr.length <= MAX_STACKS_PER_PROSES) continue;
+    const head = arr.slice(0, Math.max(1, MAX_STACKS_PER_PROSES - 1));
+    const tail = arr.slice(head.length);
+    const agg = tail.reduce((acc, x) => ({ good: acc.good + (Number(x.good) || 0), reject: acc.reject + (Number(x.reject) || 0) }), { good: 0, reject: 0 });
+    head.push(agg);
+    groups.set(label, head);
+  }
+
+  const labels = Array.from(groups.keys());
+  const maxLen = labels.reduce((mx, l) => Math.max(mx, (groups.get(l) || []).length), 0);
+  const datasets = [];
+
+  for (let i = 0; i < maxLen; i++) {
+    datasets.push({
+      label: i === 0 ? 'Output' : `Output ${i + 1}`,
+      backgroundColor: '#2ECC71',
+      data: labels.map(l => (groups.get(l) && groups.get(l)[i] ? groups.get(l)[i].good : 0)),
+      stack: 'output',
+      grouped: false,
+      order: 1,
+      barPercentage: 1.0,
+      categoryPercentage: 0.75,
+      _legend: i === 0
+    });
+    datasets.push({
+      label: i === 0 ? 'Reject' : `Reject ${i + 1}`,
+      backgroundColor: 'rgba(231, 76, 60, 0.85)',
+      borderColor: '#E74C3C',
+      borderWidth: 1,
+      data: labels.map(l => (groups.get(l) && groups.get(l)[i] ? groups.get(l)[i].reject : 0)),
+      stack: 'reject',
+      grouped: false,
+      order: 100,
+      barPercentage: 0.6,
+      categoryPercentage: 0.75,
+      _legend: i === 0
+    });
+  }
+
+  return { labels, datasets };
 }
 
 function sortMachines(machines) {
@@ -142,30 +189,37 @@ function sortMachines(machines) {
 
 function ensureChart(machines) {
   const ctx = document.getElementById('chart').getContext('2d');
+  const built = chartStacksFor(machines);
   if (!chartRef) {
     chartRef = new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: labelsFor(machines),
-        datasets: [
-          { label: 'Good', backgroundColor: '#2ECC71', data: valuesFor(machines, 'good') },
-          { label: 'Reject', backgroundColor: '#E74C3C', data: valuesFor(machines, 'reject') }
-        ]
+        labels: built.labels,
+        datasets: built.datasets
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         scales: {
-          x: { ticks: { color: '#333', autoSkip: true, maxRotation: 0 } },
-          y: { beginAtZero: true, ticks: { color: '#333', stepSize: 1, callback: (v) => Number(v).toFixed(0) } }
+          x: { stacked: true, ticks: { color: '#333', autoSkip: true, maxRotation: 0 } },
+          y: { stacked: true, beginAtZero: true, ticks: { color: '#333', stepSize: 1, callback: (v) => Number(v).toFixed(0) } }
+        },
+        plugins: {
+          legend: {
+            labels: {
+              filter: (legendItem, data) => {
+                const ds = data && data.datasets ? data.datasets[legendItem.datasetIndex] : null;
+                return !!(ds && ds._legend);
+              }
+            }
+          }
         },
         animation: { duration: 0 }
       }
     });
   } else {
-    chartRef.data.labels = labelsFor(machines);
-    chartRef.data.datasets[0].data = valuesFor(machines, 'good');
-    chartRef.data.datasets[1].data = valuesFor(machines, 'reject');
+    chartRef.data.labels = built.labels;
+    chartRef.data.datasets = built.datasets;
     chartRef.update();
   }
 }
@@ -372,7 +426,6 @@ document.addEventListener('click', (e) => {
   if (v === 'master-line') { showMasterLine(); setRouteIndicator('master-line'); try { sessionStorage.setItem('route', 'master-line'); } catch {} }
   if (v === 'master-style') { showMasterStyle(); setRouteIndicator('master-style'); try { sessionStorage.setItem('route', 'master-style'); } catch {} }
   if (v === 'master-proses') { showMasterProses(); setRouteIndicator('master-proses'); try { sessionStorage.setItem('route', 'master-proses'); } catch {} }
-  if (v === 'master-color') { showMasterColor(); setRouteIndicator('master-color'); try { sessionStorage.setItem('route', 'master-color'); } catch {} }
 });
 
 const logoutLink = document.getElementById('logoutLink');
@@ -447,13 +500,10 @@ function enforceRoleUI() {
       } else if (route === 'master-style') {
         showMasterStyle();
         setRouteIndicator('master-style');
-  } else if (route === 'master-proses') {
-    showMasterProses();
-    setRouteIndicator('master-proses');
-  } else if (route === 'master-color') {
-    showMasterColor();
-    setRouteIndicator('master-color');
-  } else {
+      } else if (route === 'master-proses') {
+        showMasterProses();
+        setRouteIndicator('master-proses');
+      } else {
         setView('task');
         restoreDashboard();
         setRouteIndicator('dashboard');
@@ -493,9 +543,13 @@ let mlRows = [];
 let mlModalAction = null;
 let mlModalEditId = null;
 let latestTxMap = {};
-let mcolRows = [];
 let msRows = [];
 let mpRows = [];
+let jpRows = [];
+let mpTab = 'jenis';
+let ajFlow = [];
+let ajJenisRows = [];
+let ajProsesRows = [];
 
 function authHeaders() {
   const headers = { 'Content-Type': 'application/json' };
@@ -528,64 +582,143 @@ function hideMasterLine() {
 
 function showMasterStyle() {
   showSectionOnly('masterStyleSection');
-  const msThead = document.getElementById('msThead');
-  const msTbody = document.getElementById('msTbody');
-  if (msThead && msTbody) { fetchMsData(); return; }
-  const msCategory = document.getElementById('msCategory');
-  const msType = document.getElementById('msType');
-  const msTypeSelected = document.getElementById('msTypeSelected');
-  const msLineSelect = document.getElementById('msLineSelect');
-  const msLineDesc = document.getElementById('msLineDesc');
-  const msReview = document.getElementById('msReview');
-  const msSubmitOrder = document.getElementById('msSubmitOrder');
+  const msTabs = document.getElementById('msTabs');
+  const msOrderPanel = document.getElementById('msOrderPanel');
+  const msListPanel = document.getElementById('msListPanel');
 
-  const TOP_TYPES = ['Kemeja','Kaos','Sweater','Hoodie','Jaket','Blazer','Polo','Cardigan'];
-  const BOTTOM_TYPES = ['Celana Panjang','Celana Pendek','Rok Pendek','Rok Panjang','Jeans','Legging','Jogger'];
-  const msOrder = { category: '', type: '', line: '' };
+  const poEl = document.getElementById('moPo');
+  const buyerEl = document.getElementById('moBuyer');
+  const orcEl = document.getElementById('moOrc');
+  const shipEl = document.getElementById('moShipmentDate');
+  const styleEl = document.getElementById('moStyle');
+  const colorEl = document.getElementById('moColor');
+  const qtyEl = document.getElementById('moQty');
+  const descEl = document.getElementById('moDescription');
+  const createBtn = document.getElementById('moCreateBtn');
 
-  function fillTypeOptions() {
-    if (!msType) return;
-    const list = msOrder.category === 'TOP' ? TOP_TYPES : msOrder.category === 'BOTTOM' ? BOTTOM_TYPES : [];
-    msType.innerHTML = '<option value="">Pilih jenis</option>' + list.map(n => `<option value="${n}">${n}</option>`).join('');
+  const searchEl = document.getElementById('moSearch');
+  const listTbody = document.getElementById('moListTbody');
+
+  function sanitizeOrcPart(v) {
+    return String(v || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '')
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(0, 32);
   }
 
-  // proses dan mesin dipindahkan ke Master Proses
+  function updateOrcPreview() {
+    if (!orcEl) return;
+    const poPart = sanitizeOrcPart(poEl && poEl.value);
+    const buyerPart = sanitizeOrcPart(buyerEl && buyerEl.value) || 'NA';
+    if (!poPart) { orcEl.value = ''; return; }
+    orcEl.value = `${poPart}-${buyerPart}-AUTO`;
+  }
 
-  async function loadLines() {
+  async function renderOrderList() {
+    if (!listTbody) return;
+    const q = searchEl ? String(searchEl.value || '').trim() : '';
+    listTbody.innerHTML = '<tr><td colspan="7" class="text-muted">Memuat...</td></tr>';
     try {
-      const res = await fetch('/api/master/line', { headers: authHeaders() });
+      const res = await fetch(`/api/master/order-list?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
       const data = await res.json();
-      const rows = Array.isArray(data.data) ? data.data : [];
-      if (msLineSelect) {
-        msLineSelect.innerHTML = '<option value="">Pilih line</option>' + rows.map(r => `<option value="${r.nama_line}">${r.nama_line}</option>`).join('');
+      const rows = Array.isArray(data && data.data) ? data.data : [];
+      if (!rows.length) {
+        listTbody.innerHTML = '<tr><td colspan="7" class="text-muted">Tidak ada data</td></tr>';
+        return;
       }
-    } catch {}
+      listTbody.innerHTML = rows.map(r => {
+        const ship = r && r.shipment_date ? String(r.shipment_date).slice(0, 10) : '';
+        const qty = Number(r && r.qty || 0);
+        return `<tr><td>${r.orc || ''}</td><td>${r.po || ''}</td><td>${r.style || ''}</td><td>${r.color || ''}</td><td>${Number.isFinite(qty) ? qty : 0}</td><td>${ship}</td><td>${r.description || ''}</td></tr>`;
+      }).join('');
+    } catch {
+      listTbody.innerHTML = '<tr><td colspan="7" class="text-muted">Gagal memuat data</td></tr>';
+    }
   }
 
-  function renderReview() {
-    if (!msReview) return;
-    msReview.innerHTML = `<div class="row g-3"><div class="col-md-4"><div class="border rounded p-3"><div class="text-muted">Jenis Pakaian</div><div class="fw-semibold">${msOrder.type || '—'}</div></div></div><div class="col-md-4"><div class="border rounded p-3"><div class="text-muted">Line Produksi</div><div class="fw-semibold">${msOrder.line || '—'}</div></div></div><div class="col-md-4"><div class="border rounded p-3"><div class="text-muted">Kategori</div><div class="fw-semibold">${msOrder.category || '—'}</div></div></div></div>`;
+  function setMsTab(tab) {
+    const btns = document.querySelectorAll('#msTabs [data-ms-tab]');
+    btns.forEach(b => b.classList.toggle('active', b.getAttribute('data-ms-tab') === tab));
+    if (msOrderPanel) msOrderPanel.classList.toggle('d-none', tab !== 'order');
+    if (msListPanel) msListPanel.classList.toggle('d-none', tab !== 'list');
+    try { sessionStorage.setItem('msTab', tab); } catch {}
+    if (tab === 'list') renderOrderList();
   }
 
-  // tidak ada aksi proses di Master Style
+  if (msTabs && !msTabs.dataset.bound) {
+    msTabs.dataset.bound = '1';
+    msTabs.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-ms-tab]');
+      if (!t) return;
+      const tab = t.getAttribute('data-ms-tab');
+      if (!tab) return;
+      setMsTab(tab);
+    });
+  }
 
-  if (msCategory) msCategory.addEventListener('change', () => { msOrder.category = msCategory.value; fillTypeOptions(); msOrder.type = ''; msTypeSelected.textContent = '—'; renderReview(); });
-  if (msType) msType.addEventListener('change', () => { msOrder.type = msType.value; msTypeSelected.textContent = msOrder.type || '—'; renderReview(); });
-  if (msLineSelect) msLineSelect.addEventListener('change', () => { msOrder.line = msLineSelect.value; msLineDesc.textContent = msOrder.line ? `Line terpilih: ${msOrder.line}` : '—'; renderReview(); });
-  if (msSubmitOrder) msSubmitOrder.addEventListener('click', async () => {
-    const payload = { category: msOrder.category, type: msOrder.type, processes: [], line: msOrder.line };
-    if (!payload.line || !payload.type || !payload.category) { alert('Lengkapi kategori, jenis, dan line.'); return; }
-    try {
-      const res = await fetch('/api/style/order', { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
-      const data = await res.json();
-      if (data && data.ok) { alert('Order style disimpan. Tambahkan proses & mesin di Master Proses.'); }
-      else { alert('Gagal menyimpan order style'); }
-    } catch { alert('Gagal menyimpan order style'); }
-  });
+  if (poEl && !poEl.dataset.bound) {
+    poEl.dataset.bound = '1';
+    poEl.addEventListener('input', updateOrcPreview);
+  }
+  if (buyerEl && !buyerEl.dataset.bound) {
+    buyerEl.dataset.bound = '1';
+    buyerEl.addEventListener('input', updateOrcPreview);
+  }
 
-  loadLines();
-  fillTypeOptions();
-  renderReview();
+  if (createBtn && !createBtn.dataset.bound) {
+    createBtn.dataset.bound = '1';
+    createBtn.addEventListener('click', async () => {
+      const po = String(poEl && poEl.value || '').trim();
+      const buyer = String(buyerEl && buyerEl.value || '').trim();
+      const style = String(styleEl && styleEl.value || '').trim();
+      const color = String(colorEl && colorEl.value || '').trim();
+      const qty = Number(qtyEl && qtyEl.value || 0);
+      const shipment_date = String(shipEl && shipEl.value || '').trim();
+      const description = String(descEl && descEl.value || '').trim();
+
+      if (!po) { alert('PO wajib diisi'); return; }
+      if (!buyer) { alert('Buyer wajib diisi'); return; }
+      if (!style) { alert('Style wajib diisi'); return; }
+      if (!Number.isFinite(qty) || qty < 0) { alert('Qty tidak valid'); return; }
+      if (!shipment_date) { alert('Shipment date wajib diisi'); return; }
+
+      const payload = { po, buyer, style, color, qty, shipment_date, description };
+      try {
+        createBtn.setAttribute('disabled', 'true');
+        const res = await fetch('/api/master/order-list', { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok || !data || !data.ok) { alert('Gagal menyimpan master order'); return; }
+        if (orcEl) orcEl.value = (data && data.data && data.data.orc) ? String(data.data.orc) : '';
+        alert(`Master order tersimpan. ORC: ${(data && data.data && data.data.orc) ? data.data.orc : '-'}`);
+        if (styleEl) styleEl.value = '';
+        if (colorEl) colorEl.value = '';
+        if (qtyEl) qtyEl.value = '';
+        if (shipEl) shipEl.value = '';
+        if (descEl) descEl.value = '';
+        setMsTab('list');
+      } catch {
+        alert('Gagal menyimpan master order');
+      } finally {
+        try { createBtn.removeAttribute('disabled'); } catch {}
+      }
+    });
+  }
+
+  if (searchEl && !searchEl.dataset.bound) {
+    searchEl.dataset.bound = '1';
+    let t = null;
+    searchEl.addEventListener('input', () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => { renderOrderList(); }, 250);
+    });
+  }
+
+  updateOrcPreview();
+  let storedTab = 'order';
+  try { storedTab = sessionStorage.getItem('msTab') || 'order'; } catch {}
+  setMsTab(storedTab === 'list' ? 'list' : 'order');
 }
 
 function hideMasterStyle() {
@@ -595,6 +728,32 @@ function hideMasterStyle() {
 
 function showMasterProses() {
   showSectionOnly('masterProsesSection');
+  const tabs = document.getElementById('mpTabs');
+  if (tabs) {
+    try {
+      const stored = sessionStorage.getItem('mpTab');
+      mpTab = stored === 'alur' ? 'alur' : stored === 'proses' ? 'proses' : 'jenis';
+    } catch { mpTab = 'jenis'; }
+    setMpTab(mpTab);
+    if (!tabs.dataset.bound) {
+      tabs.dataset.bound = '1';
+      tabs.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-mp-tab]');
+        if (!btn) return;
+        const next = btn.getAttribute('data-mp-tab');
+        if (!next) return;
+        setMpTab(next);
+        try { sessionStorage.setItem('mpTab', next); } catch {}
+        if (next === 'jenis') fetchJpData();
+        else if (next === 'proses') fetchMpData();
+        else initAjPanel();
+      });
+    }
+    if (mpTab === 'jenis') fetchJpData();
+    else if (mpTab === 'proses') fetchMpData();
+    else initAjPanel();
+    return;
+  }
   const mpThead = document.getElementById('mpThead');
   const mpTbody = document.getElementById('mpTbody');
   if (mpThead && mpTbody) { fetchMpData(); return; }
@@ -897,12 +1056,28 @@ function hideMasterProses() {
   if (section) section.classList.add('d-none');
 }
 
+function setMpTab(tab) {
+  mpTab = tab;
+  const tabs = document.querySelectorAll('[data-mp-tab]');
+  tabs.forEach(el => el.classList.toggle('active', el.getAttribute('data-mp-tab') === tab));
+  const jenisPanel = document.getElementById('mpJenisPanel');
+  const prosesPanel = document.getElementById('mpProsesPanel');
+  const alurPanel = document.getElementById('mpAlurPanel');
+  if (jenisPanel) jenisPanel.classList.toggle('d-none', tab !== 'jenis');
+  if (prosesPanel) prosesPanel.classList.toggle('d-none', tab !== 'proses');
+  if (alurPanel) alurPanel.classList.toggle('d-none', tab !== 'alur');
+  try { sessionStorage.setItem('mpTab', mpTab); } catch {}
+  if (tab === 'jenis') fetchJpData();
+  else if (tab === 'proses') fetchMpData();
+  else if (tab === 'alur') initAjPanel();
+}
+
 function showSectionOnly(id) {
   const linePanel = document.querySelector('.line-panel');
   const controlsBar = document.querySelector('.controls-bar');
   if (linePanel) linePanel.classList.add('d-none');
   if (controlsBar) controlsBar.classList.add('d-none');
-  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection','masterCounterSection','masterColorSection'].forEach(s => {
+  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection','masterCounterSection'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.add('d-none');
   });
@@ -915,7 +1090,7 @@ function restoreDashboard() {
   const controlsBar = document.querySelector('.controls-bar');
   if (linePanel) linePanel.classList.remove('d-none');
   if (controlsBar) controlsBar.classList.remove('d-none');
-  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection','masterCounterSection','masterColorSection'].forEach(s => {
+  ['masterMesinSection','masterLineSection','masterStyleSection','masterProsesSection','masterOrderSection','masterCounterSection'].forEach(s => {
     const el = document.getElementById(s);
     if (el) el.classList.add('d-none');
   });
@@ -1034,7 +1209,7 @@ function setupMoOrderPanel() {
     try {
       const res = await fetch('/api/style/order', { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
       const data = await res.json();
-      if (data && data.ok) { alert('Order style disimpan. Tambahkan proses & mesin di Master Proses.'); setMoTab('summary'); }
+      if (data && data.ok) { alert('Order style disimpan. Tambahkan proses & mesin di Daftar Proses.'); setMoTab('summary'); }
       else { alert('Gagal menyimpan order style'); }
     } catch { alert('Gagal menyimpan order style'); }
   };
@@ -1964,6 +2139,8 @@ async function fetchMpData() {
     const data = await res.json();
     mpRows = (data && data.data) || [];
     renderMpTable();
+    const addBtn = document.getElementById('mpAddBtn');
+    if (addBtn) addBtn.classList.toggle('d-none', !(currentUser && currentUser.role === 'tech_admin'));
   } catch {
     const tbody = document.getElementById('mpTbody');
     if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Gagal memuat data</td></tr>';
@@ -1990,82 +2167,105 @@ function renderMpTable() {
   }).join('');
 }
 
-function showMasterColor() {
-  showSectionOnly('masterColorSection');
-  fetchMcolData();
-}
-
-async function fetchMcolData() {
+async function fetchJpData() {
   try {
-    const thead = document.getElementById('mcolThead');
-    const tbody = document.getElementById('mcolTbody');
+    const thead = document.getElementById('jpThead');
+    const tbody = document.getElementById('jpTbody');
     if (thead && tbody) {
-      thead.innerHTML = '<tr><th>ID</th><th>Color</th><th style="width:120px">Aksi</th></tr>';
+      thead.innerHTML = '<tr><th>ID</th><th>Jenis Pakaian</th><th style="width:120px">Aksi</th></tr>';
       tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Memuat data...</td></tr>';
     }
-    const res = await fetch('/api/master/color', { headers: authHeaders() });
+    const res = await fetch('/api/master/jenis-pakaian', { headers: authHeaders() });
     const data = await res.json();
-    mcolRows = (data && data.data) || [];
-    renderMcolTable();
+    jpRows = (data && data.data) || [];
+    renderJpTable();
+    const addBtn = document.getElementById('jpAddBtn');
+    if (addBtn) addBtn.classList.toggle('d-none', !(currentUser && currentUser.role === 'tech_admin'));
   } catch {
-    const tbody = document.getElementById('mcolTbody');
+    const tbody = document.getElementById('jpTbody');
     if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-danger">Gagal memuat data</td></tr>';
   }
 }
 
-function renderMcolTable() {
-  const thead = document.getElementById('mcolThead');
-  const tbody = document.getElementById('mcolTbody');
-  const search = document.getElementById('mcolSearch');
+function renderJpTable() {
+  const thead = document.getElementById('jpThead');
+  const tbody = document.getElementById('jpTbody');
+  const search = document.getElementById('jpSearch');
   const q = (search && search.value ? search.value.toLowerCase() : '').trim();
   if (!thead || !tbody) return;
-  thead.innerHTML = '<tr><th>ID</th><th>Color</th><th style="width:120px">Aksi</th></tr>';
-  const rows = mcolRows.filter(r => !q || String(r.color).toLowerCase().includes(q));
+  thead.innerHTML = '<tr><th>ID</th><th>Jenis Pakaian</th><th style="width:120px">Aksi</th></tr>';
+  const rows = jpRows.filter(r => !q || String(r && r.nama || '').toLowerCase().includes(q));
   if (rows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Tidak ada data</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map(r => `<tr data-id="${r.id}"><td>${r.id}</td><td>${r.color}</td><td>
-    ${currentUser && currentUser.role === 'tech_admin' ? `<button class="btn btn-link p-0 me-2 text-warning" title="Edit" data-mcol-act="edit"><i class="bi bi-pencil-square fs-5"></i></button><button class="btn btn-link p-0 text-danger" title="Hapus" data-mcol-act="delete"><i class="bi bi-trash fs-5"></i></button>` : ''}
-  </td></tr>`).join('');
+  tbody.innerHTML = rows.map(r => {
+    const aksi = (currentUser && currentUser.role === 'tech_admin')
+      ? `<button class="btn btn-link p-0 me-2 text-warning" title="Edit" data-jp-act="edit"><i class="bi bi-pencil-square fs-5"></i></button><button class="btn btn-link p-0 text-danger" title="Hapus" data-jp-act="delete"><i class="bi bi-trash fs-5"></i></button>`
+      : '';
+    return `<tr data-id="${r.id}"><td>${r.id}</td><td>${String(r.nama || '')}</td><td>${aksi}</td></tr>`;
+  }).join('');
 }
 
-document.addEventListener('click', async (e) => {
-  const actBtn = e.target.closest('[data-mcol-act]');
-  if (!actBtn) return;
-  if (!currentUser || currentUser.role !== 'tech_admin') return;
-  const tr = actBtn.closest('tr');
-  const id = tr ? tr.getAttribute('data-id') : null;
-  const act = actBtn.getAttribute('data-mcol-act');
-  if (act === 'edit') {
-    const row = mcolRows.find(r => String(r.id) === String(id));
-    const current = row ? row.color : '';
-    const color = prompt('Nama Color:', current || '');
-    if (!color) return;
-    await fetch(`/api/master/color/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ color }) });
-    await fetchMcolData();
-    return;
-  } else if (act === 'delete') {
-    if (!confirm('Hapus color?')) return;
-    await fetch(`/api/master/color/${id}`, { method: 'DELETE', headers: authHeaders() });
-    await fetchMcolData();
-  }
-});
-
-const mcolAddBtn = document.getElementById('mcolAddBtn');
-if (mcolAddBtn) {
-  mcolAddBtn.addEventListener('click', async () => {
-    if (!currentUser || currentUser.role !== 'tech_admin') return;
-    const color = prompt('Nama Color:');
-    if (!color) return;
-    await fetch('/api/master/color', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ color }) });
-    await fetchMcolData();
-  });
+async function initAjPanel() {
+  const jenisSelect = document.getElementById('ajJenisSelect');
+  const prosesSelect = document.getElementById('ajProsesSelect');
+  const addBtn = document.getElementById('ajAddProcess');
+  if (addBtn) addBtn.classList.toggle('d-none', !(currentUser && currentUser.role === 'tech_admin'));
+  try {
+    const [jr, pr] = await Promise.all([
+      fetch('/api/master/jenis-pakaian', { headers: authHeaders() }).then(r => r.json()).catch(() => ({})),
+      fetch('/api/master/proses_produksi', { headers: authHeaders() }).then(r => r.json()).catch(() => ({}))
+    ]);
+    ajJenisRows = Array.isArray(jr && jr.data) ? jr.data : [];
+    ajProsesRows = Array.isArray(pr && pr.data) ? pr.data : [];
+    if (jenisSelect) {
+      jenisSelect.innerHTML = '<option value="">Pilih jenis pakaian</option>' + ajJenisRows.map(r => `<option value="${r.id}">${String(r.nama || '')}</option>`).join('');
+      if (!jenisSelect.value && ajJenisRows.length) jenisSelect.value = String(ajJenisRows[0].id);
+    }
+    if (prosesSelect) {
+      prosesSelect.innerHTML = '<option value="">Pilih proses</option>' + ajProsesRows.map(r => `<option value="${r.id}">${String(r.nama || '')}</option>`).join('');
+    }
+    const jenisId = jenisSelect && jenisSelect.value ? parseInt(jenisSelect.value, 10) : null;
+    if (jenisId != null) await loadAjFlow(jenisId);
+    renderAjList();
+  } catch {}
 }
 
-const mcolSearch = document.getElementById('mcolSearch');
-if (mcolSearch) {
-  mcolSearch.addEventListener('input', () => renderMcolTable());
+async function loadAjFlow(jenisId) {
+  try {
+    const res = await fetch(`/api/master/alur-jahit/${jenisId}`, { headers: authHeaders() });
+    const data = await res.json();
+    const rows = Array.isArray(data && data.data) ? data.data : [];
+    ajFlow = rows.map(r => ({ proses_id: r.proses_id, nama: r.proses_nama }));
+  } catch { ajFlow = []; }
+}
+
+function renderAjList() {
+  const list = document.getElementById('ajList');
+  if (!list) return;
+  if (!ajFlow.length) { list.innerHTML = '<div class="text-muted">Belum ada alur</div>'; return; }
+  const canEdit = currentUser && currentUser.role === 'tech_admin';
+  list.innerHTML = ajFlow.map((r, idx) => {
+    const btns = canEdit
+      ? `<div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary btn-sm" data-aj-act="up" data-idx="${idx}">↑</button>
+          <button class="btn btn-outline-secondary btn-sm" data-aj-act="down" data-idx="${idx}">↓</button>
+          <button class="btn btn-outline-danger btn-sm" data-aj-act="delete" data-idx="${idx}">Hapus</button>
+        </div>`
+      : '';
+    return `<div class="d-flex justify-content-between align-items-center border rounded p-2">
+      <div>${idx + 1}. ${String(r.nama || '')}</div>
+      ${btns}
+    </div>`;
+  }).join('');
+}
+
+async function saveAjFlow(jenisId) {
+  const ids = ajFlow.map(x => x.proses_id);
+  try {
+    await fetch(`/api/master/alur-jahit/${jenisId}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ proses_ids: ids }) });
+  } catch {}
 }
 
 const msSearch = document.getElementById('msSearch');
@@ -2076,6 +2276,41 @@ if (msSearch) {
 const mpSearch = document.getElementById('mpSearch');
 if (mpSearch) {
   mpSearch.addEventListener('input', () => renderMpTable());
+}
+
+const jpSearch = document.getElementById('jpSearch');
+if (jpSearch) {
+  jpSearch.addEventListener('input', () => renderJpTable());
+}
+
+const mpAddBtn = document.getElementById('mpAddBtn');
+if (mpAddBtn) {
+  mpAddBtn.addEventListener('click', async () => {
+    if (!currentUser || currentUser.role !== 'tech_admin') return;
+    const nama = prompt('Nama Proses:', '');
+    if (nama == null) return;
+    if (!String(nama).trim()) return;
+    try {
+      await fetch('/api/master/proses_produksi', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ nama }) });
+      await fetchMpData();
+      if (mpTab === 'alur') await initAjPanel();
+    } catch {}
+  });
+}
+
+const jpAddBtn = document.getElementById('jpAddBtn');
+if (jpAddBtn) {
+  jpAddBtn.addEventListener('click', async () => {
+    if (!currentUser || currentUser.role !== 'tech_admin') return;
+    const nama = prompt('Jenis Pakaian:', '');
+    if (nama == null) return;
+    if (!String(nama).trim()) return;
+    try {
+      await fetch('/api/master/jenis-pakaian', { method: 'POST', headers: authHeaders(), body: JSON.stringify({ nama }) });
+      await fetchJpData();
+      if (mpTab === 'alur') await initAjPanel();
+    } catch {}
+  });
 }
 
 document.addEventListener('click', (e) => {
@@ -2128,6 +2363,84 @@ document.addEventListener('click', (e) => {
       .then(() => fetchMpData())
       .catch(() => {});
   }
+});
+
+document.addEventListener('click', (e) => {
+  const actBtn = e.target.closest('[data-jp-act]');
+  if (!actBtn) return;
+  if (!currentUser || currentUser.role !== 'tech_admin') return;
+  const tr = actBtn.closest('tr');
+  const id = tr ? tr.getAttribute('data-id') : null;
+  if (!id) return;
+  const act = actBtn.getAttribute('data-jp-act');
+  if (act === 'edit') {
+    const row = jpRows.find(r => String(r.id) === String(id));
+    const current = row ? row.nama : '';
+    const nama = prompt('Jenis Pakaian:', current || '');
+    if (nama == null) return;
+    if (!String(nama).trim()) return;
+    fetch(`/api/master/jenis-pakaian/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ nama }) })
+      .then(async () => { await fetchJpData(); if (mpTab === 'alur') await initAjPanel(); })
+      .catch(() => {});
+    return;
+  } else if (act === 'delete') {
+    if (!confirm('Hapus jenis pakaian?')) return;
+    fetch(`/api/master/jenis-pakaian/${id}`, { method: 'DELETE', headers: authHeaders() })
+      .then(async () => { await fetchJpData(); if (mpTab === 'alur') await initAjPanel(); })
+      .catch(() => {});
+  }
+});
+
+const ajJenisSelect = document.getElementById('ajJenisSelect');
+if (ajJenisSelect) {
+  ajJenisSelect.addEventListener('change', async () => {
+    const jenisId = ajJenisSelect.value ? parseInt(ajJenisSelect.value, 10) : null;
+    if (jenisId == null) { ajFlow = []; renderAjList(); return; }
+    await loadAjFlow(jenisId);
+    renderAjList();
+  });
+}
+
+const ajAddProcess = document.getElementById('ajAddProcess');
+if (ajAddProcess) {
+  ajAddProcess.addEventListener('click', async () => {
+    if (!currentUser || currentUser.role !== 'tech_admin') return;
+    const jenisId = ajJenisSelect && ajJenisSelect.value ? parseInt(ajJenisSelect.value, 10) : null;
+    const prosesSelect = document.getElementById('ajProsesSelect');
+    const prosesId = prosesSelect && prosesSelect.value ? parseInt(prosesSelect.value, 10) : null;
+    if (jenisId == null || prosesId == null) return;
+    if (ajFlow.find(x => Number(x.proses_id) === Number(prosesId))) return;
+    const row = ajProsesRows.find(r => Number(r.id) === Number(prosesId));
+    ajFlow.push({ proses_id: prosesId, nama: row ? row.nama : '' });
+    renderAjList();
+    await saveAjFlow(jenisId);
+  });
+}
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-aj-act]');
+  if (!btn) return;
+  if (!currentUser || currentUser.role !== 'tech_admin') return;
+  const act = btn.getAttribute('data-aj-act');
+  const idx = btn.getAttribute('data-idx') ? parseInt(btn.getAttribute('data-idx'), 10) : -1;
+  if (idx < 0 || idx >= ajFlow.length) return;
+  const jenisId = ajJenisSelect && ajJenisSelect.value ? parseInt(ajJenisSelect.value, 10) : null;
+  if (jenisId == null) return;
+  if (act === 'up' && idx > 0) {
+    const tmp = ajFlow[idx - 1];
+    ajFlow[idx - 1] = ajFlow[idx];
+    ajFlow[idx] = tmp;
+  } else if (act === 'down' && idx < ajFlow.length - 1) {
+    const tmp = ajFlow[idx + 1];
+    ajFlow[idx + 1] = ajFlow[idx];
+    ajFlow[idx] = tmp;
+  } else if (act === 'delete') {
+    ajFlow.splice(idx, 1);
+  } else {
+    return;
+  }
+  renderAjList();
+  await saveAjFlow(jenisId);
 });
 
 document.addEventListener('click', async (e) => {

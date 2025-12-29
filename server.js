@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -11,11 +12,11 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const PORT = 3000;
-const IOT_HTTP_PORT = Number(process.env.IOT_HTTP_PORT || 5000);
+const PORT = Number(process.env.PORT || process.env.APP_PORT || 3000);
 const SIMULATE = (process.env.SIMULATE || 'false').toLowerCase() === 'true';
-const SECRET = process.env.SESSION_SECRET || '';
-const ENABLE_DEBUG = (process.env.DEBUG_API || 'false').toLowerCase() === 'true';
+const SECRET = (process.env.SESSION_SECRET && String(process.env.SESSION_SECRET).trim())
+  ? String(process.env.SESSION_SECRET).trim()
+  : crypto.randomBytes(32).toString('hex');
 const IOT_HTTP_KEY = process.env.IOT_HTTP_KEY || '';
 const IOT_MQTT_URL = process.env.IOT_MQTT_URL || '';
 const IOT_MQTT_TOPIC = process.env.IOT_MQTT_TOPIC || 'factory/+/rx/+/tx/+/event';
@@ -34,10 +35,6 @@ app.get('/favicon.ico', (req, res) => res.status(204).end());
 app.use('/vendor/bootstrap', express.static(path.join(__dirname, 'node_modules', 'bootstrap', 'dist')));
 app.use('/vendor/bootstrap-icons', express.static(path.join(__dirname, 'node_modules', 'bootstrap-icons')));
 app.use('/vendor/chart.js', express.static(path.join(__dirname, 'node_modules', 'chart.js', 'dist')));
-
-const iotApp = express();
-const iotServer = http.createServer(iotApp);
-iotApp.use(express.json());
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -73,14 +70,21 @@ async function simulateIntoDb() {
 }
 
 io.on('connection', async (socket) => {
-  const state = await db.getStateLive();
-  socket.emit('updateData', { ...state, timestamp: Date.now() });
+  try {
+    const state = await db.getStateLive();
+    socket.emit('updateData', { ...state, timestamp: Date.now() });
+  } catch {}
 });
 
-setInterval(async () => {
-  if (SIMULATE) await simulateIntoDb();
-  await emitState();
-}, 1000);
+async function tick() {
+  try {
+    if (SIMULATE) await simulateIntoDb();
+    await emitState();
+  } catch (e) {
+    console.error('tick_error', String((e && e.message) || e || ''));
+  }
+}
+setInterval(() => { tick(); }, 1000);
 
 app.get('/api/state', async (req, res) => {
   const state = await db.getStateLive();
@@ -172,11 +176,6 @@ app.post('/api/machines/increment', async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Operator Counter Dashboard server running on http://localhost:${PORT}`);
 });
-if (IOT_HTTP_PORT && IOT_HTTP_PORT !== PORT) {
-  iotServer.listen(IOT_HTTP_PORT, () => {
-    console.log(`IoT HTTP listener running on http://localhost:${IOT_HTTP_PORT}`);
-  });
-}
 
 async function getAuthUser(req, res) {
   const hdr = String(req.headers.authorization || '').trim();
@@ -214,159 +213,6 @@ app.get('/api/auth/me', async (req, res) => {
   const user = await getAuthUser(req, res);
   if (!user) return;
   res.json({ id: user.id, username: user.username, role: user.role, lines: user.lines });
-});
-
-app.get('/api/debug/master_users', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    await db.ensureButtonSchema();
-    const pool = db.getButtonPool();
-    const [rows] = await pool.query('SELECT * FROM master_users');
-    res.json({ data: rows });
-  } catch (e) {
-    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
-  }
-});
-
-app.post('/api/debug/drop-machine-tx-transmitters', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  try {
-    const result = await db.dropMachineTxAndTransmitters();
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
-  }
-});
-
-
-app.get('/api/debug/pingdb', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    await db.ensureButtonSchema();
-    const pool = db.getButtonPool();
-    const [rows] = await pool.query('SELECT 1 AS ok');
-    res.json({ data: rows });
-  } catch (e) {
-    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
-  }
-});
-
-app.get('/api/debug/columns', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    await db.ensureButtonSchema();
-    const pool = db.getButtonPool();
-    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
-    const [rows] = await pool.query('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = "master_users"', [dbname]);
-    res.json({ data: rows.map(r => r.COLUMN_NAME || r.column_name) });
-  } catch (e) {
-    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
-  }
-});
-
-app.get('/api/debug/table-exists/:name', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    await db.ensureButtonSchema();
-    const pool = db.getButtonPool();
-    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
-    const name = String(req.params.name || '').trim();
-    if (!name) return res.status(400).json({ error: 'table_name_wajib' });
-    const [rows] = await pool.query('SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?', [dbname, name]);
-    const c = (rows && rows[0] && (rows[0].c || rows[0].C)) || 0;
-    res.json({ table: name, exists: c > 0 });
-  } catch (e) {
-    res.status(500).json({ error: 'db_error', message: String(e && e.message || '') });
-  }
-});
-
-app.get('/api/debug/getuser/:username', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    const u = await auth.getUserByUsernameAsync(String(req.params.username || '').trim());
-    if (!u || u.error === 'db_error') return res.status(404).json({ error: 'user_not_found' });
-    res.json(u);
-  } catch {
-    res.status(500).json({ error: 'db_error' });
-  }
-});
-
-// removed: legacy debug hash endpoints
-
-app.post('/api/debug/upsert-user', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    const { username, password, role, lines } = req.body || {};
-    if (!username || !password || !role) return res.status(400).json({ error: 'username_password_role_wajib' });
-    await db.ensureButtonSchema();
-    const pool = db.getButtonPool();
-    const dbname = process.env.BUTTON_DB_NAME || 'button_db';
-    const [colsRows] = await pool.query('SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = "master_users"', [dbname]);
-    const cols = Array.isArray(colsRows) ? colsRows.map(r => r.COLUMN_NAME || r.column_name).filter(Boolean) : [];
-    const has = (c) => cols.includes(c);
-    const [ex] = await pool.execute('SELECT id FROM master_users WHERE username = ? LIMIT 1', [String(username)]);
-    const exists = Array.isArray(ex) && ex[0];
-    const lineStr = Array.isArray(lines) ? lines.join(',') : (typeof lines === 'string' ? lines : '');
-    if (exists) {
-      const parts = [];
-      const args = [];
-      if (has('role')) { parts.push('role = ?'); args.push(String(role)); }
-      if (has('password')) { parts.push('password = ?'); args.push(String(password)); }
-      if (has('lines')) { parts.push('lines = ?'); args.push(lineStr); }
-      if (has('nama') && !has('lines')) { parts.push('nama = ?'); args.push(String(username)); }
-      if (!parts.length) return res.status(500).json({ error: 'db_error' });
-      args.push(String(username));
-      await pool.execute(`UPDATE master_users SET ${parts.join(', ')} WHERE username = ?`, args);
-    } else {
-      const insCols = [];
-      const placeholders = [];
-      const args = [];
-      if (has('username')) { insCols.push('username'); placeholders.push('?'); args.push(String(username)); }
-      if (has('role')) { insCols.push('role'); placeholders.push('?'); args.push(String(role)); }
-      if (has('password')) { insCols.push('password'); placeholders.push('?'); args.push(String(password)); }
-      if (has('lines')) { insCols.push('lines'); placeholders.push('?'); args.push(lineStr); }
-      if (has('nama') && !has('lines')) { insCols.push('nama'); placeholders.push('?'); args.push(String(username)); }
-      if (!insCols.length) return res.status(500).json({ error: 'db_error' });
-      await pool.execute(`INSERT INTO master_users (${insCols.join(',')}) VALUES (${placeholders.join(',')})`, args);
-    }
-    const [rows] = await pool.execute('SELECT * FROM master_users WHERE username = ?', [String(username)]);
-    const u = rows && rows[0] ? rows[0] : null;
-    res.json({ ok: true, user: u });
-  } catch {
-    res.status(500).json({ error: 'db_error' });
-  }
-});
-
-app.post('/api/debug/verify-user', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    const { username, password } = req.body || {};
-    if (!username || !password) return res.status(400).json({ error: 'username_password_wajib' });
-    await db.ensureButtonSchema();
-    const pool = db.getButtonPool();
-    const [rows] = await pool.execute('SELECT id, username, role, password, lines FROM master_users WHERE username = ?', [String(username)]);
-    if (!rows.length) return res.status(404).json({ error: 'user_tidak_ada' });
-    const u = rows[0];
-    const ok = String(password) === String(u.password || '');
-    res.json({ ok, role: u.role, lines: u.lines });
-  } catch {
-    res.status(500).json({ error: 'db_error' });
-  }
-});
-
-app.get('/api/debug/user/:username', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  try {
-    const uname = String(req.params.username || '').trim();
-    const u = await auth.getUserByUsernameAsync(uname);
-    if (!u) return res.status(404).json({ error: 'user_tidak_ada' });
-    res.json({ id: u.id, username: u.username, role: u.role, lines: u.lines });
-  } catch {
-    res.status(500).json({ error: 'db_error' });
-  }
 });
 
 
@@ -456,6 +302,16 @@ app.get('/api/master/proses_produksi', async (req, res) => {
   res.json({ data: rows });
 });
 
+app.post('/api/master/proses_produksi', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { nama } = req.body || {};
+  if (!nama) return res.status(400).json({ error: 'nama wajib' });
+  const row = await db.createProsesProduksi({ nama });
+  res.json({ ok: true, data: row });
+});
+
 app.put('/api/master/proses_produksi/:id', async (req, res) => {
   const user = await getAuthUser(req, res);
   if (!user) return;
@@ -472,6 +328,62 @@ app.delete('/api/master/proses_produksi/:id', async (req, res) => {
   if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
   await db.deleteProsesProduksi(req.params.id);
   res.json({ ok: true });
+});
+
+app.get('/api/master/jenis-pakaian', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const rows = await db.getJenisPakaian();
+  res.json({ data: rows });
+});
+
+app.post('/api/master/jenis-pakaian', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { nama } = req.body || {};
+  if (!nama) return res.status(400).json({ error: 'nama wajib' });
+  const row = await db.createJenisPakaian({ nama });
+  res.json({ ok: true, data: row });
+});
+
+app.put('/api/master/jenis-pakaian/:id', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { nama } = req.body || {};
+  if (!nama) return res.status(400).json({ error: 'nama wajib' });
+  await db.updateJenisPakaian(req.params.id, { nama });
+  res.json({ ok: true });
+});
+
+app.delete('/api/master/jenis-pakaian/:id', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  await db.deleteJenisPakaian(req.params.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/master/alur-jahit/:jenisId', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const jenisId = Number(req.params.jenisId);
+  if (!Number.isFinite(jenisId)) return res.status(400).json({ error: 'jenisId invalid' });
+  const rows = await db.getAlurJahitByJenisId(jenisId);
+  res.json({ data: rows });
+});
+
+app.put('/api/master/alur-jahit/:jenisId', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const jenisId = Number(req.params.jenisId);
+  if (!Number.isFinite(jenisId)) return res.status(400).json({ error: 'jenisId invalid' });
+  const { proses_ids } = req.body || {};
+  const result = await db.setAlurJahitByJenisId(jenisId, Array.isArray(proses_ids) ? proses_ids : []);
+  if (result && result.ok) return res.json({ ok: true });
+  return res.status(400).json({ ok: false });
 });
 
 // Master Line (line_db)
@@ -504,42 +416,6 @@ app.delete('/api/master/style/:id', async (req, res) => {
   if (!user) return;
   if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
   await db.deleteMasterStyle(req.params.id);
-  res.json({ ok: true });
-});
-
-// Master Color
-app.get('/api/master/color', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  const rows = await db.getMasterColors();
-  res.json({ data: rows });
-});
-
-app.post('/api/master/color', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  const { color } = req.body || {};
-  if (!color) return res.status(400).json({ error: 'color_wajib' });
-  const row = await db.createMasterColor({ color });
-  res.json({ ok: true, data: row });
-});
-
-app.put('/api/master/color/:id', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  const { color } = req.body || {};
-  if (!color) return res.status(400).json({ error: 'color_wajib' });
-  await db.updateMasterColor(req.params.id, { color });
-  res.json({ ok: true });
-});
-
-app.delete('/api/master/color/:id', async (req, res) => {
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
-  await db.deleteMasterColor(req.params.id);
   res.json({ ok: true });
 });
 
@@ -619,8 +495,8 @@ app.get('/api/transmitters', async (req, res) => {
     if (!pool) return res.json({ data: [] });
     const [rows] = await pool.query(
       'SELECT s.tx, COALESCE(NULLIF(t.name, ""), s.tx) AS name, s.updated_at AS last_seen, s.output, s.reject, s.output_total, s.reject_total, t.receiver_id, r.mac_address ' +
-      'FROM summary s LEFT JOIN transmitters t ON t.transmitter_id = s.tx ' +
-      'LEFT JOIN receivers r ON r.receiver_id = t.receiver_id ' +
+      'FROM iot_summary s LEFT JOIN iot_transmitters t ON t.transmitter_id = s.tx ' +
+      'LEFT JOIN iot_receivers r ON r.receiver_id = t.receiver_id ' +
       'ORDER BY s.tx ASC'
     );
     const now = Date.now();
@@ -645,8 +521,8 @@ app.get('/api/transmitters/available', async (req, res) => {
     if (!pool) return res.json({ data: [] });
     const [rows] = await pool.query(
       'SELECT s.tx, COALESCE(NULLIF(t.name, ""), s.tx) AS name, s.updated_at AS last_seen, s.output, s.reject, s.output_total, s.reject_total, t.receiver_id, r.mac_address ' +
-      'FROM summary s LEFT JOIN transmitters t ON t.transmitter_id = s.tx ' +
-      'LEFT JOIN receivers r ON r.receiver_id = t.receiver_id ' +
+      'FROM iot_summary s LEFT JOIN iot_transmitters t ON t.transmitter_id = s.tx ' +
+      'LEFT JOIN iot_receivers r ON r.receiver_id = t.receiver_id ' +
       'ORDER BY s.tx ASC'
     );
     const usedRows = await db.getMachineTxAssignments();
@@ -786,26 +662,6 @@ app.delete('/api/machine/tx', async (req, res) => {
   return res.status(400).json({ ok: false, error: 'unassign_failed' });
 });
 
-// Debug endpoint untuk memeriksa style_order di button_db
-app.get('/api/debug/style-order/:line', async (req, res) => {
-  if (!ENABLE_DEBUG) return res.status(404).json({ error: 'not_found' });
-  const user = await getAuthUser(req, res);
-  if (!user) return;
-  const line = req.params.line;
-  try {
-    const rows = await db.getMasterLine();
-    const found = (rows || []).find(r => String(r.nama_line) === String(line));
-    const idLine = found ? found.id_line : null;
-    let styleRow = null;
-    if (idLine != null) {
-      const pool = db.getButtonPool();
-      const [so] = await pool.query('SELECT id_style, style_nama, id_line FROM style_order WHERE id_line = ? ORDER BY id_style DESC LIMIT 1', [idLine]);
-      styleRow = Array.isArray(so) && so[0] ? so[0] : null;
-    }
-    res.json({ id_line: idLine, style_row: styleRow });
-  } catch (e) { res.status(500).json({ error: 'debug_error', message: String(e && e.message || e) }); }
-});
-
 // Master Proses: add machines per process
 app.post('/api/process/machines', async (req, res) => {
   const user = await getAuthUser(req, res);
@@ -835,6 +691,43 @@ app.get('/api/master/order', async (req, res) => {
   if (!user) return;
   const data = await db.getMasterOrderSummary();
   res.json({ data });
+});
+
+app.get('/api/master/order-list', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  const q = req.query && req.query.q ? String(req.query.q) : '';
+  const data = await db.listMasterOrderList({ q });
+  res.json({ data });
+});
+
+app.post('/api/master/order-list', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { po, buyer, style, color, qty, shipment_date, description } = req.body || {};
+  const result = await db.createMasterOrderList({ po, buyer, style, color, qty, shipment_date, description });
+  if (result && result.ok) return res.json(result);
+  return res.status(400).json({ ok: false });
+});
+
+app.put('/api/master/order-list/:orc', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const { po, buyer, style, color, qty, shipment_date, description } = req.body || {};
+  const result = await db.updateMasterOrderListByOrc(req.params.orc, { po, buyer, style, color, qty, shipment_date, description });
+  if (result && result.ok) return res.json(result);
+  return res.status(400).json({ ok: false });
+});
+
+app.delete('/api/master/order-list/:orc', async (req, res) => {
+  const user = await getAuthUser(req, res);
+  if (!user) return;
+  if (user.role !== 'tech_admin') return res.status(403).json({ error: 'forbidden' });
+  const result = await db.deleteMasterOrderListByOrc(req.params.orc);
+  if (result && result.ok) return res.json(result);
+  return res.status(400).json({ ok: false });
 });
 
 app.delete('/api/master/order', async (req, res) => {
@@ -982,7 +875,6 @@ async function handleIotHttp(req, res) {
   }
 }
 app.post('/data', handleIotHttp);
-iotApp.post('/data', handleIotHttp);
 app.post('/api/receivers/heartbeat', async (req, res) => {
   try {
     const { mac_address } = req.body || {};
